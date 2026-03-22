@@ -36,11 +36,20 @@ def matmul_scalar_cpu(A: np.ndarray, B: np.ndarray) -> np.ndarray:
 
 def matmul_true_simd(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   """
-  Implementing true SIMD matrix multiplicaion using AVX Family + Cython
+  Implementing true SIMD matrix multiplicaion using AVX Family + Cython.
   """
   return simd.matmul_true_simd(A, B)
+
+def matmul_true_simd_offset(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  Implements true SIMD matrix multiplicaion using AVX Family + Cython.
+  Implements a simulated offset to observe performance with memeory access misalignment.
+  """
+  return simd.matmul_true_simd_offset(A, B)
     
-def matmul_simd_membank(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+def matmul_true_simd_membank(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   """
-  Simulates SIMD with a memory-bank for matrix multiplication
+  Implementing true SIMD matrix multiplicaion using AVX Family + Cython.
+  Simulates a memory access offset and "memory bank" to detect misalignment.
   """
+  return simd.matmul_true_simd_membank(A, B)

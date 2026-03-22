@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from profiler import measure_matmul, compute_speedups, print_results_table
-from kernels import matmul_naive, matmul_simd, matmul_scalar_cpu, matmul_true_simd
+from kernels import matmul_naive, matmul_simd, matmul_scalar_cpu, matmul_true_simd, matmul_true_simd_offset, matmul_true_simd_membank
 
 # ── IoT-representative layer shapes (MLP for 28x28 image) ────
 IOT_LAYER_SHAPES = [
@@ -48,7 +48,9 @@ def benchmark_speed_sweep():
         # TODO: team members add more kernels
         "Numpy Scalar": matmul_scalar_cpu,
         "NumPy SIMD": matmul_simd,
-        "True SIMD Cython": matmul_true_simd
+        "True SIMD": matmul_true_simd,
+        "True SIMD Offset": matmul_true_simd_offset,
+        "True SIMD MemBank": matmul_true_simd_membank
         # "Cython": matmul_cython,
         # "int8 Quant": matmul_quantized_int8,
     }
@@ -89,10 +91,12 @@ def benchmark_inference_workload():
     # Kernel registry: add new kernels here as they're implemented
     kernels = {
         "Naive": matmul_naive,
+        # TODO: team members add more kernels
         "Numpy Scalar": matmul_scalar_cpu,
         "NumPy SIMD": matmul_simd,
-        "True SIMD Cython": matmul_true_simd
-        # TODO: team members add more kernels
+        "True SIMD Cython": matmul_true_simd,
+        "True SIMD Offset": matmul_true_simd_offset,
+        "True SIMD MemBank": matmul_true_simd_membank
     }
 
     workload_results = []
