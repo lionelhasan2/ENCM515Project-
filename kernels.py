@@ -9,6 +9,7 @@ representing C = A @ B where:
 """
 
 import numpy as np
+import simd
 
 
 def matmul_naive(A: np.ndarray, B: np.ndarray) -> np.ndarray:
@@ -20,3 +21,26 @@ def matmul_naive(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     # assert K == K2, f"Inner dimensions must match: {K} vs {K2}"
     
     return A @ B
+  
+def matmul_simd(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  Simulated SIMD Matrix Multiply using Vectorized Loops.
+  """
+  return simd.matmul_simd(A, B)
+
+def matmul_scalar_cpu(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  Scalar/CPU Matrix Multiply.
+  """
+  return simd.matmul_scalar(A, B)
+
+def matmul_true_simd(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  Implementing true SIMD matrix multiplicaion using AVX Family + Cython
+  """
+  return simd.matmul_true_simd(A, B)
+    
+def matmul_simd_membank(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  Simulates SIMD with a memory-bank for matrix multiplication
+  """

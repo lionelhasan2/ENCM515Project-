@@ -13,10 +13,12 @@ import numpy as np
 import os
 import sys
 
+#import example
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from profiler import measure_matmul, compute_speedups, print_results_table
-from kernels import matmul_naive
+from kernels import matmul_naive, matmul_simd, matmul_scalar_cpu, matmul_true_simd
 
 # ── IoT-representative layer shapes (MLP for 28x28 image) ────
 IOT_LAYER_SHAPES = [
@@ -44,10 +46,16 @@ def benchmark_speed_sweep():
     kernels = {
         "Naive": matmul_naive,
         # TODO: team members add more kernels
-        # "NumPy SIMD": matmul_numpy,
+        "Numpy Scalar": matmul_scalar_cpu,
+        "NumPy SIMD": matmul_simd,
+        "True SIMD Cython": matmul_true_simd
         # "Cython": matmul_cython,
         # "int8 Quant": matmul_quantized_int8,
     }
+    
+    #result = example.fibonacci(35)
+    #print("Result: ", result)
+    #exit(1)
 
     for size in BENCHMARK_SIZES:
         print(f"\n  Matrix size: {size}x{size}")
@@ -60,7 +68,7 @@ def benchmark_speed_sweep():
         for name, fn in kernels.items():
             r = measure_matmul(fn, A, B, name, runs=5)
             size_results.append(r)
-
+            
         # Compute speedups vs naive
         compute_speedups(size_results, "Naive")
         print_results_table(size_results)
@@ -81,6 +89,9 @@ def benchmark_inference_workload():
     # Kernel registry: add new kernels here as they're implemented
     kernels = {
         "Naive": matmul_naive,
+        "Numpy Scalar": matmul_scalar_cpu,
+        "NumPy SIMD": matmul_simd,
+        "True SIMD Cython": matmul_true_simd
         # TODO: team members add more kernels
     }
 
@@ -91,9 +102,14 @@ def benchmark_inference_workload():
         total_mem_kb = 0
 
         for M, K, N in IOT_LAYER_SHAPES:
+            
             rng = np.random.default_rng(seed=42)
             A = rng.standard_normal((M, K)).astype(np.float32)
             B = rng.standard_normal((K, N)).astype(np.float32)
+            
+            print("A Matrix Rows: ", len(A), "Matrix Colums: ", len(A[0]))
+            print("B Matrix: ", len(B), "Matrix Colums: ", len(B[0]))
+
 
             r = measure_matmul(fn, A, B, name, runs=5)
             layer_results.append(r)
