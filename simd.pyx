@@ -126,7 +126,7 @@ def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A,
     Implements a simulated offset to observe performance with memeory access misalignment.
     """
 
-    cdef int offset = 3
+    cdef int offset = 4
 
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32)
     # Transpose B array to avoid row/colum misalignment
@@ -172,7 +172,7 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
     Simulates a memory access offset and "memory bank" to detect misalignment.
     """
 
-    cdef int offset = 3
+    cdef int offset = 4
 
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32)
     # Transpose B array to avoid row/colum misalignment
@@ -197,12 +197,14 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
                 # k in being indexed by 8 to ensure we are not using redundant data
 
                 # Check if the offset is divisible by 32
-                if ((k + offset) * 4) % 32 != 0:
-                    indx = k - offset # Do nothing
+                if (k * 4) % 32 != 0:
+                    indx = k
+                else:
+                    indx = k
 
                 # Load all 8 datapoints in a single instruction
-                reg3 = _mm256_loadu_ps(&reg3_view[i, k + offset])
-                reg4 = _mm256_loadu_ps(&reg4_view[j, k + offset])
+                reg3 = _mm256_loadu_ps(&reg3_view[i, indx + offset])
+                reg4 = _mm256_loadu_ps(&reg4_view[j, indx + offset])
                 
                 # Multiply and add both registers
                 accumulate = _mm256_fmadd_ps(reg3, reg4, accumulate)
