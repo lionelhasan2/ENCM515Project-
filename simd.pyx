@@ -101,6 +101,7 @@ def matmul_true_simd(np.ndarray[np.float32_t, ndim=2] A,
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
+            accumulate = _mm256_setzero_ps()
             for k in range(0, A.shape[1], 8):
                 # k in being indexed by 8 to ensure we are not using redundant data
 
@@ -147,6 +148,7 @@ def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A,
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
+            accumulate = _mm256_setzero_ps()
             for k in range(0, (A.shape[1] - offset), 8):
                 # k in being indexed by 8 to ensure we are not using redundant data
 
@@ -193,6 +195,7 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
+            accumulate = _mm256_setzero_ps()
             for k in range(0, (A.shape[1] - offset), 8):
                 # k in being indexed by 8 to ensure we are not using redundant data
 

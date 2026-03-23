@@ -13,8 +13,6 @@ import numpy as np
 import os
 import sys
 
-#import example
-
 sys.path.insert(0, os.path.dirname(__file__))
 
 from profiler import measure_matmul, compute_speedups, print_results_table
@@ -44,7 +42,7 @@ def benchmark_speed_sweep():
 
     # Kernel registry: add new kernels here as they're implemented
     kernels = {
-        "Naive": matmul_naive,
+        #"Naive": matmul_naive,
         # TODO: team members add more kernels
         "Numpy Scalar": matmul_scalar_cpu,
         "NumPy SIMD": matmul_simd,
@@ -54,10 +52,6 @@ def benchmark_speed_sweep():
         # "Cython": matmul_cython,
         # "int8 Quant": matmul_quantized_int8,
     }
-    
-    #result = example.fibonacci(35)
-    #print("Result: ", result)
-    #exit(1)
 
     for size in BENCHMARK_SIZES:
         print(f"\n  Matrix size: {size}x{size}")
@@ -72,7 +66,7 @@ def benchmark_speed_sweep():
             size_results.append(r)
             
         # Compute speedups vs naive
-        compute_speedups(size_results, "Naive")
+        compute_speedups(size_results, "Numpy Scalar")
         print_results_table(size_results)
         all_results.extend(size_results)
 
@@ -90,7 +84,7 @@ def benchmark_inference_workload():
 
     # Kernel registry: add new kernels here as they're implemented
     kernels = {
-        "Naive": matmul_naive,
+        #"Naive": matmul_naive,
         # TODO: team members add more kernels
         "Numpy Scalar": matmul_scalar_cpu,
         "NumPy SIMD": matmul_simd,
