@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from profiler import measure_matmul, compute_speedups, print_results_table
-from kernels import matmul_naive
+from kernels import matmul_naive, matmul_simd, matmul_scalar_cpu, matmul_true_simd, matmul_true_simd_offset, matmul_true_simd_membank
 
 # ── IoT-representative layer shapes (MLP for 28x28 image) ────
 IOT_LAYER_SHAPES = [
@@ -42,9 +42,13 @@ def benchmark_speed_sweep():
 
     # Kernel registry: add new kernels here as they're implemented
     kernels = {
-        "Naive": matmul_naive,
+        #"Naive": matmul_naive,
         # TODO: team members add more kernels
-        # "NumPy SIMD": matmul_numpy,
+        "Numpy Scalar": matmul_scalar_cpu,
+        "NumPy SIMD": matmul_simd,
+        "True SIMD": matmul_true_simd,
+        "True SIMD Offset": matmul_true_simd_offset,
+        "True SIMD MemBank": matmul_true_simd_membank
         # "Cython": matmul_cython,
         # "int8 Quant": matmul_quantized_int8,
     }
@@ -60,9 +64,9 @@ def benchmark_speed_sweep():
         for name, fn in kernels.items():
             r = measure_matmul(fn, A, B, name, runs=5)
             size_results.append(r)
-
+            
         # Compute speedups vs naive
-        compute_speedups(size_results, "Naive")
+        compute_speedups(size_results, "Numpy Scalar")
         print_results_table(size_results)
         all_results.extend(size_results)
 
@@ -80,8 +84,13 @@ def benchmark_inference_workload():
 
     # Kernel registry: add new kernels here as they're implemented
     kernels = {
-        "Naive": matmul_naive,
+        #"Naive": matmul_naive,
         # TODO: team members add more kernels
+        "Numpy Scalar": matmul_scalar_cpu,
+        "NumPy SIMD": matmul_simd,
+        "True SIMD Cython": matmul_true_simd,
+        "True SIMD Offset": matmul_true_simd_offset,
+        "True SIMD MemBank": matmul_true_simd_membank
     }
 
     workload_results = []
@@ -91,9 +100,14 @@ def benchmark_inference_workload():
         total_mem_kb = 0
 
         for M, K, N in IOT_LAYER_SHAPES:
+            
             rng = np.random.default_rng(seed=42)
             A = rng.standard_normal((M, K)).astype(np.float32)
             B = rng.standard_normal((K, N)).astype(np.float32)
+            
+            print("A Matrix Rows: ", len(A), "Matrix Colums: ", len(A[0]))
+            print("B Matrix: ", len(B), "Matrix Colums: ", len(B[0]))
+
 
             r = measure_matmul(fn, A, B, name, runs=5)
             layer_results.append(r)
