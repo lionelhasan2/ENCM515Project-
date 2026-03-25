@@ -49,7 +49,6 @@ def benchmark_speed_sweep():
         "True SIMD": matmul_true_simd,
         "True SIMD Offset": matmul_true_simd_offset,
         "True SIMD MemBank": matmul_true_simd_membank
-        # "Cython": matmul_cython,
         # "int8 Quant": matmul_quantized_int8,
     }
 

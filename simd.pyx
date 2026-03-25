@@ -1,5 +1,6 @@
 cimport numpy as np
 import numpy as np
+import random
 
 """
 The matrix multiply formula: result[i,j] = Sum(A[i,k] * B[k,j])
@@ -38,6 +39,7 @@ def matmul_simd(np.ndarray[np.float32_t, ndim=2] A,
     cdef float reg2[8]
 
     cdef int i, j, k, y, t
+    cdef int numop = 0
 
     for i in range(A.shape[0]):
         for j in range(B.shape[1]):
@@ -46,16 +48,18 @@ def matmul_simd(np.ndarray[np.float32_t, ndim=2] A,
 
                 # Fill the reigsters with data from the memory view
                 for y in range(8):
-                    reg1[y] = reg1_view[i, k + y]
-                    reg2[y] = reg2_view[k + y, j]
+                    reg1[y] = reg1_view[i, k + y] # row A
+                    reg2[y] = reg2_view[k + y, j] # colum B
 
-                # Multiply and accumualate
-                for t in range(8):
+                for t in range(8): # Tried np.sum(np.mul()) and it was significantly slower
                     accumulate += reg1[t] * reg2[t]
+                    numop = numop + 1
 
             result_view[i, j] = accumulate
 
-    return result
+    #print("Number of Operations for Vectoized MatMul: ", numop)
+    #print(result)
+    return result, numop
 
 
 def matmul_scalar(np.ndarray[np.float32_t, ndim=2] A, 
@@ -67,13 +71,17 @@ def matmul_scalar(np.ndarray[np.float32_t, ndim=2] A,
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32) # Declare numpy array for results
 
     cdef int i, j, k
+    cdef int numop = 0
 
     for i in range(A.shape[0]):
         for j in range(B.shape[1]):
             for k in range(len(B)):
                 result[i, j] += A[i, k] * B[k, j]
+                numop = numop + 1
 
-    return result
+    #print("Number of Operations for Scalar MatMul: ", numop)
+    #print(result)
+    return result, numop
 
 
 def matmul_true_simd(np.ndarray[np.float32_t, ndim=2] A, 
@@ -83,8 +91,8 @@ def matmul_true_simd(np.ndarray[np.float32_t, ndim=2] A,
     """
 
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32)
-    # Transpose B array to avoid row/colum misalignment
-    Bt = np.transpose(B)
+    Bt = np.transpose(B) # Transpose B array to avoid row/colum misalignment
+    Bt = np.ascontiguousarray(Bt) # Ensures the array is stored as a continuous block after transpose
 
     cdef float[:, :] reg3_view = A
     cdef float[:, :] reg4_view = Bt
@@ -94,15 +102,16 @@ def matmul_true_simd(np.ndarray[np.float32_t, ndim=2] A,
     cdef __m256 reg4 = _mm256_setzero_ps()
     cdef __m256 accumulate = _mm256_setzero_ps()
 
-    # In order to store the resulting scalar value after SIMD operations, 
+    # Vector to store the resulting scalar value after SIMD operations 
     cdef float tmp_reg[8]
 
     cdef int i, j, k
+    cdef int numop = 0
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
             accumulate = _mm256_setzero_ps()
-            for k in range(0, A.shape[1], 8):
+            for k in range(0, Bt.shape[0], 8):
                 # k in being indexed by 8 to ensure we are not using redundant data
 
                 # Load all 8 datapoints in a single instruction
@@ -111,13 +120,16 @@ def matmul_true_simd(np.ndarray[np.float32_t, ndim=2] A,
                 
                 # Multiply and add both registers
                 accumulate = _mm256_fmadd_ps(reg3, reg4, accumulate)
+                numop = numop + 1
 
             # Store data into a temporary vector so it can be changed into a scalar value later
             _mm256_storeu_ps(tmp_reg, accumulate)
             result_view[i, j] = (tmp_reg[0] + tmp_reg[1] + tmp_reg[2] + tmp_reg[3] +
                                  tmp_reg[4] + tmp_reg[5] + tmp_reg[6] + tmp_reg[7])
 
-    return result
+    #print("Number of Operations for SIMD MatMul: ", numop)
+    #print(result)
+    return result, numop
 
 
 def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A, 
@@ -127,11 +139,10 @@ def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A,
     Implements a simulated offset to observe performance with memeory access misalignment.
     """
 
-    cdef int offset = 4
-
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32)
     # Transpose B array to avoid row/colum misalignment
     Bt = np.transpose(B)
+    Bt = np.ascontiguousarray(Bt)
 
     cdef float[:, :] reg3_view = A
     cdef float[:, :] reg4_view = Bt
@@ -141,15 +152,17 @@ def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A,
     cdef __m256 reg4 = _mm256_setzero_ps()
     cdef __m256 accumulate = _mm256_setzero_ps()
 
-    # In order to store the resulting scalar value after SIMD operations, 
+    # Vector to store the resulting scalar value after SIMD operations 
     cdef float tmp_reg[8]
 
     cdef int i, j, k
+    cdef int numop = 0
+    cdef int offset = random.randint(1, 7)
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
             accumulate = _mm256_setzero_ps()
-            for k in range(0, (A.shape[1] - offset), 8):
+            for k in range(0, (Bt.shape[0] - offset - 7), 8):
                 # k in being indexed by 8 to ensure we are not using redundant data
 
                 # Load all 8 datapoints in a single instruction
@@ -158,13 +171,16 @@ def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A,
                 
                 # Multiply and add both registers
                 accumulate = _mm256_fmadd_ps(reg3, reg4, accumulate)
+                numop = numop + 1
 
             # Store data into a temporary vector so it can be changed into a scalar value later
             _mm256_storeu_ps(tmp_reg, accumulate)
             result_view[i, j] = (tmp_reg[0] + tmp_reg[1] + tmp_reg[2] + tmp_reg[3] +
                                  tmp_reg[4] + tmp_reg[5] + tmp_reg[6] + tmp_reg[7])
 
-    return result
+    #print("Number of Operations for Offset SIMD MatMul: ", numop)
+    #print(result)
+    return result, numop
 
 
 def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A, 
@@ -174,11 +190,10 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
     Simulates a memory access offset and "memory bank" to detect misalignment.
     """
 
-    cdef int offset = 4
-
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32)
     # Transpose B array to avoid row/colum misalignment
     Bt = np.transpose(B)
+    Bt = np.ascontiguousarray(Bt)
 
     cdef float[:, :] reg3_view = A
     cdef float[:, :] reg4_view = Bt
@@ -188,33 +203,39 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
     cdef __m256 reg4 = _mm256_setzero_ps()
     cdef __m256 accumulate = _mm256_setzero_ps()
 
-    # In order to store the resulting scalar value after SIMD operations, 
+    # Vector to store the resulting scalar value after SIMD operations 
     cdef float tmp_reg[8]
 
-    cdef int i, j, k, indx
+    cdef int i, j, indx
+    cdef int numop = 0
+    cdef int offset = random.randint(1, 7)
+    cdef int k = offset
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
             accumulate = _mm256_setzero_ps()
-            for k in range(0, (A.shape[1] - offset), 8):
+            for k in range(0, (Bt.shape[0] - offset), 8):
                 # k in being indexed by 8 to ensure we are not using redundant data
 
                 # Check if the offset is divisible by 32
                 if (k * 4) % 32 != 0:
-                    indx = k
+                    indx = k - offset
                 else:
                     indx = k
-
+                
                 # Load all 8 datapoints in a single instruction
-                reg3 = _mm256_loadu_ps(&reg3_view[i, indx + offset])
-                reg4 = _mm256_loadu_ps(&reg4_view[j, indx + offset])
+                reg3 = _mm256_loadu_ps(&reg3_view[i, indx]) # Loads A[i, k] -> A[i, k+7]
+                reg4 = _mm256_loadu_ps(&reg4_view[j, indx])
                 
                 # Multiply and add both registers
                 accumulate = _mm256_fmadd_ps(reg3, reg4, accumulate)
+                numop = numop + 1
 
             # Store data into a temporary vector so it can be changed into a scalar value later
             _mm256_storeu_ps(tmp_reg, accumulate)
             result_view[i, j] = (tmp_reg[0] + tmp_reg[1] + tmp_reg[2] + tmp_reg[3] +
                                  tmp_reg[4] + tmp_reg[5] + tmp_reg[6] + tmp_reg[7])
 
-    return result
+    #print("Number of Operations for MemBank SIMD MatMul: ", numop)
+    #print(result)
+    return result, numop
