@@ -48,6 +48,9 @@ class ProfileResult:
 
     # Arithmetic intensity (FLOPS per byte)
     arithmetic_intensity: float  # Higher AI = better power efficiency
+    
+    # Number of operations performed (+, *, etc)
+    num_operations: int
 
     # Speedup (filled in post-hoc relative to baseline)
     speedup: float = 1.0
@@ -89,7 +92,7 @@ def measure_matmul(
     times = []
     for _ in range(runs):
         t0 = time.perf_counter()
-        C = kernel_fn(A, B)
+        C, numop = kernel_fn(A, B)
         t1 = time.perf_counter()
         times.append(t1 - t0)
 
@@ -132,6 +135,7 @@ def measure_matmul(
         memory_total_kb=mem_total,
         fits_cortex_m4=fits_m4,
         arithmetic_intensity=arith_intensity,
+        num_operations=numop,
     )
 
 
@@ -154,7 +158,7 @@ def print_results_table(results: list[ProfileResult]):
     """Print results table to console (latency, GFLOPS, speedup, memory, AI)."""
     header = (
         f"\n{'Kernel':<22} {'Shape':>14} {'Latency(ms)':>12} {'GFLOPS':>8} "
-        f"{'Speedup':>8} {'Mem(KB)':>8} {'FitsM4':>7} {'AI':>8}"
+        f"{'Speedup':>8} {'Mem(KB)':>8} {'FitsM4':>7} {'AI':>8} {'NumOp':>10}"
     )
     print(header)
     print("─" * len(header))
@@ -163,5 +167,5 @@ def print_results_table(results: list[ProfileResult]):
         fits = "✓" if r.fits_cortex_m4 else "✗"
         print(
             f"{r.kernel_name:<22} {shape_str:>14} {r.latency_ms:>12.4f} {r.gflops:>8.4f} "
-            f"{r.speedup:>8.2f}x {r.memory_total_kb:>8.1f} {fits:>7} {r.arithmetic_intensity:>8.2f}"
+            f"{r.speedup:>8.2f}x {r.memory_total_kb:>8.1f} {fits:>7} {r.arithmetic_intensity:>8.2f} {r.num_operations:>10}"
         )
