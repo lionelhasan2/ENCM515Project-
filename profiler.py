@@ -107,9 +107,15 @@ def measure_matmul(
 
 
     # Memory footprint
-    mem_A = A.nbytes / 1024
-    mem_B = B.nbytes / 1024
-    mem_C = (M * N * np.dtype(A.dtype).itemsize) / 1024
+    if "Int8" in kernel_name or "Quantized" in kernel_name:
+        mem_A = (M * K) / 1024
+        mem_B = (K * N) / 1024
+        mem_C = (M * N * 4) / 1024 # c is still returned as 32 bit float
+    else:
+        mem_A = A.nbytes / 1024
+        mem_B = B.nbytes / 1024
+        mem_C = (M * N * np.dtype(A.dtype).itemsize) / 1024
+        
     mem_total = mem_A + mem_B + mem_C
     fits_m4 = mem_total <= CORTEX_M4_SRAM_KB
 

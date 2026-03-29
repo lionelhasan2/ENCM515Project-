@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from profiler import measure_matmul, compute_speedups, print_results_table
-from kernels import matmul_naive, matmul_simd, matmul_scalar_cpu, matmul_true_simd, matmul_true_simd_offset, matmul_true_simd_membank
+from kernels import matmul_naive, matmul_simd, matmul_scalar_cpu, matmul_true_simd, matmul_true_simd_offset, matmul_true_simd_membank, matmul_quantized_int8
 
 # ── IoT-representative layer shapes (MLP for 28x28 image) ────
 IOT_LAYER_SHAPES = [
@@ -48,8 +48,8 @@ def benchmark_speed_sweep():
         "NumPy SIMD": matmul_simd,
         "True SIMD": matmul_true_simd,
         "True SIMD Offset": matmul_true_simd_offset,
-        "True SIMD MemBank": matmul_true_simd_membank
-        # "int8 Quant": matmul_quantized_int8,
+        "True SIMD MemBank": matmul_true_simd_membank,
+        "Int8 Quantized": matmul_quantized_int8,
     }
 
     for size in BENCHMARK_SIZES:
@@ -89,7 +89,8 @@ def benchmark_inference_workload():
         "NumPy SIMD": matmul_simd,
         "True SIMD Cython": matmul_true_simd,
         "True SIMD Offset": matmul_true_simd_offset,
-        "True SIMD MemBank": matmul_true_simd_membank
+        "True SIMD MemBank": matmul_true_simd_membank,
+        "Int8 Quantized": matmul_quantized_int8,
     }
 
     workload_results = []
