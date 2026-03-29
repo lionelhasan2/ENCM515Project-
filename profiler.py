@@ -119,9 +119,13 @@ def measure_matmul(
     mem_total = mem_A + mem_B + mem_C
     fits_m4 = mem_total <= CORTEX_M4_SRAM_KB
 
-    # Arithmetic intensity
-    # Bytes accessed: read A (M*K), read B (K*N), write C (M*N)
-    bytes_accessed = A.nbytes + B.nbytes + (M * N * np.dtype(A.dtype).itemsize)
+    # Arithmetic intensity: theoretical FLOPs per byte accessed
+    # Use flops (2*M*N*K), not numop, so all kernels solving same problem have same AI
+    if "Int8" in kernel_name or "Quantized" in kernel_name:
+        bytes_accessed = (M * K * 1) + (K * N * 1) + (M * N * 4)  # int8 + int8 + float32
+    else:
+        bytes_accessed = (M * K * 4) + (K * N * 4) + (M * N * 4)  # float32 all
+    
     arith_intensity = flops / bytes_accessed if bytes_accessed > 0 else 0.0
 
     return ProfileResult(
@@ -147,16 +151,25 @@ def measure_matmul(
 
 def compute_speedups(results: list[ProfileResult], baseline_name: str) -> list[ProfileResult]:
     """
-    Fill in speedup field for each result relative to a named baseline kernel.
-    Modifies results in-place.
+    Fill in speedup field relative to baseline kernel for each matrix shape.
+    Compares each kernel to Baseline for the same matrix dimensions only.
     """
-    baseline = next((r for r in results if r.kernel_name == baseline_name), None)
-    if baseline is None:
-        raise ValueError(f"Baseline kernel '{baseline_name}' not found in results")
-
+    # Group by matrix shape
+    shapes = {}
     for r in results:
-        r.speedup = baseline.latency_ms / r.latency_ms if r.latency_ms > 0 else 0.0
-
+        if r.matrix_shape not in shapes:
+            shapes[r.matrix_shape] = {}
+        shapes[r.matrix_shape][r.kernel_name] = r
+    
+    # For each shape, compute speedup relative to baseline for that shape
+    for shape, kernels_dict in shapes.items():
+        baseline = kernels_dict.get(baseline_name)
+        if baseline is None:
+            continue
+        
+        for r in kernels_dict.values():
+            r.speedup = baseline.latency_ms / r.latency_ms if r.latency_ms > 0 else 0.0
+    
     return results
 
 

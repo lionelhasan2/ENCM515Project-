@@ -59,3 +59,9 @@ def matmul_quantized_int8(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   Int8 Quantized Matrix Multiply: Simulates quantization for embedded deployment.
   """
   return simd.matmul_quantized_int8(A, B)
+
+def matmul_simd_quantized_int8(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  SIMD + Int8 Quantized Matrix Multiply: Combines vectorization with quantization.
+  """
+  return simd.matmul_simd_quantized_int8(A, B)

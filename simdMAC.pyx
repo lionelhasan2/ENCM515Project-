@@ -11,6 +11,8 @@ External call to generate real SIMD instructions (ARM NEON).
 """
 cdef extern from "arm_neon.h":
     ctypedef float float32x4_t # Declares the datatype for SIMD vectors of 4 elements (128-bit)
+    ctypedef char int8x8_t     # 64-bit vector of 8 int8 elements
+    ctypedef short int16x8_t   # 128-bit vector of 8 int16 elements
 
     float32x4_t vld1q_f32(float*) # Loads 4 floats at once
 
@@ -19,6 +21,12 @@ cdef extern from "arm_neon.h":
     float32x4_t vmovq_n_f32(float) # Set all lanes to a scalar value
 
     void vst1q_f32(float*, float32x4_t) # Stores 4 floats to memory
+    
+    int8x8_t vld1_s8(char*) # Load 8 int8 values
+    
+    int16x8_t vmull_s8(int8x8_t, int8x8_t) # Multiply 8 int8 values to 8 int16 values
+    
+    void vst1q_s16(short*, int16x8_t) # Store 8 int16 values to memory
 
 
 def matmul_simd(np.ndarray[np.float32_t, ndim=2] A, 
@@ -250,4 +258,65 @@ def matmul_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
 
     #print("Number of Operations for Quantized MatMul: ", numop)
     #print(result)
+    return result, numop
+
+
+def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A, 
+                               np.ndarray[np.float32_t, ndim=2] B):
+    """
+    SIMD + Quantized Int8 Matrix Multiply (ARM NEON).
+    Combines quantization (reduced memory) with NEON vectorization.
+    """
+
+    scale_a = np.max(np.abs(A)) / 127.0
+    scale_b = np.max(np.abs(B)) / 127.0
+
+    if scale_a == 0:
+        scale_a = 1.0
+    if scale_b == 0:
+        scale_b = 1.0
+
+    A_quant = np.clip(np.round(A / scale_a), -128, 127).astype(np.int8)
+    B_quant = np.clip(np.round(B / scale_b), -128, 127).astype(np.int8)
+
+    result_int = np.zeros((A.shape[0], B.shape[1]), dtype=np.int32)
+    Bt = np.transpose(B_quant)
+    Bt = np.ascontiguousarray(Bt)
+
+    cdef char[:, :] a_view = A_quant
+    cdef char[:, :] bt_view = Bt
+    cdef int[:, :] result_view = result_int
+
+    cdef int8x8_t reg_a
+    cdef int8x8_t reg_b
+    cdef int16x8_t product
+
+    cdef int i, j, k
+    cdef int numop = 0
+    cdef long accumulate_int
+    
+    cdef short tmp_prod[8]
+
+    for i in range(A.shape[0]):
+        for j in range(Bt.shape[0]):
+            accumulate_int = 0
+            for k in range(0, Bt.shape[1], 8):
+                # Load 8 int8 values
+                reg_a = vld1_s8(&a_view[i, k])
+                reg_b = vld1_s8(&bt_view[j, k])
+                
+                # Multiply int8 to int16 (widens elements)
+                product = vmull_s8(reg_a, reg_b)
+                
+                # Store product to temporary array and sum
+                # (vgetq_lane_s16 requires constant index so we use a temp array)
+                vst1q_s16(tmp_prod, product)
+                accumulate_int += tmp_prod[0] + tmp_prod[1] + tmp_prod[2] + tmp_prod[3] + \
+                                  tmp_prod[4] + tmp_prod[5] + tmp_prod[6] + tmp_prod[7]
+                
+                numop = numop + 1
+
+            result_view[i, j] = accumulate_int
+
+    result = result_int.astype(np.float32) * (scale_a * scale_b)
     return result, numop
