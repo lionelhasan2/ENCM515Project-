@@ -239,3 +239,49 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
     #print("Number of Operations for MemBank SIMD MatMul: ", numop)
     #print(result)
     return result, numop
+
+
+def matmul_quantized_int8(np.ndarray[np.float32_t, ndim=2] A, 
+                          np.ndarray[np.float32_t, ndim=2] B):
+    """
+    Int8 Quantized Matrix Multiply
+    """
+
+    # get scale to map float to int8
+    scale_a = np.max(np.abs(A)) / 127.0
+    scale_b = np.max(np.abs(B)) / 127.0
+
+    if scale_a == 0:
+        scale_a = 1.0
+    if scale_b == 0:
+        scale_b = 1.0
+
+    # quantize
+    A_quant = np.clip(np.round(A / scale_a), -128, 127).astype(np.int8)
+    B_quant = np.clip(np.round(B / scale_b), -128, 127).astype(np.int8)
+
+    result_int = np.zeros((A.shape[0], B.shape[1]), dtype=np.int32)
+
+    # use memory views for speed
+    cdef char[:, :] a_view = A_quant
+    cdef char[:, :] b_view = B_quant
+    cdef int[:, :] result_view = result_int
+
+    cdef int i, j, k
+    cdef int numop = 0
+    cdef int accumulate
+
+    for i in range(A.shape[0]):
+        for j in range(B.shape[1]):
+            accumulate = 0
+            for k in range(len(B)):
+                accumulate += a_view[i, k] * b_view[k, j]
+                numop = numop + 1
+            
+            result_view[i, j] = accumulate
+
+    result = result_int.astype(np.float32) * (scale_a * scale_b)
+
+    #print("Number of Operations for Quantized MatMul: ", numop)
+    #print(result)
+    return result, numop
