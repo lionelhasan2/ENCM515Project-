@@ -53,3 +53,9 @@ def matmul_true_simd_membank(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   Simulates a memory access offset and "memory bank" to detect misalignment.
   """
   return simd.matmul_true_simd_membank(A, B)
+
+def matmul_quantized_int8(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  Int8 Quantized Matrix Multiply: Simulates quantization for embedded deployment.
+  """
+  return simd.matmul_quantized_int8(A, B)
