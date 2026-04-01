@@ -1,0 +1,15 @@
+{
+  "version": "0.2.1",
+  "tasks": [
+    {
+      "taskLabel": "task-simd",
+      "appliesTo": "simd.pyx",
+      "type": "launch"
+    },
+    {
+      "taskLabel": "task-simd",
+      "appliesTo": "simd.pyx",
+      "type": "launch"
+    }
+  ]
+}

@@ -48,15 +48,9 @@ class ProfileResult:
 
     # Arithmetic intensity (FLOPS per byte)
     arithmetic_intensity: float  # Higher AI = better power efficiency
-    
-    # Number of operations performed (+, *, etc)
-    num_operations: int
 
     # Speedup (filled in post-hoc relative to baseline)
     speedup: float = 1.0
-
-    #relative error for quantized kernels, compared to baseline
-    error: float = 0.0
 
 
 def measure_matmul(
@@ -84,7 +78,6 @@ def measure_matmul(
     -------
     ProfileResult
         Latency, GFLOPS, memory, and speedup metrics
-        also relative error
     """
     M, K = A.shape
     _, N = B.shape
@@ -96,7 +89,7 @@ def measure_matmul(
     times = []
     for _ in range(runs):
         t0 = time.perf_counter()
-        C, numop = kernel_fn(A, B)
+        C = kernel_fn(A, B)
         t1 = time.perf_counter()
         times.append(t1 - t0)
 
@@ -110,31 +103,16 @@ def measure_matmul(
     gflops = (flops / latency_s) / 1e9 if latency_s > 0 else 0.0
 
 
-    # Reference result for error calculation (using high-precision matmul)
-    ref = np.matmul(A.astype(np.float64), B.astype(np.float64))
-    result = C.astype(np.float64)
-
-
     # Memory footprint
-    if "Int8" in kernel_name or "Quantized" in kernel_name:
-        mem_A = (M * K) / 1024
-        mem_B = (K * N) / 1024
-        mem_C = (M * N * 4) / 1024 # c is still returned as 32 bit float
-    else:
-        mem_A = A.nbytes / 1024
-        mem_B = B.nbytes / 1024
-        mem_C = (M * N * np.dtype(A.dtype).itemsize) / 1024
-        
+    mem_A = A.nbytes / 1024
+    mem_B = B.nbytes / 1024
+    mem_C = (M * N * np.dtype(A.dtype).itemsize) / 1024
     mem_total = mem_A + mem_B + mem_C
     fits_m4 = mem_total <= CORTEX_M4_SRAM_KB
 
-    # Arithmetic intensity: theoretical FLOPs per byte accessed
-    # Use flops (2*M*N*K), not numop, so all kernels solving same problem have same AI
-    if "Int8" in kernel_name or "Quantized" in kernel_name:
-        bytes_accessed = (M * K * 1) + (K * N * 1) + (M * N * 4)  # int8 + int8 + float32
-    else:
-        bytes_accessed = (M * K * 4) + (K * N * 4) + (M * N * 4)  # float32 all
-    
+    # Arithmetic intensity
+    # Bytes accessed: read A (M*K), read B (K*N), write C (M*N)
+    bytes_accessed = A.nbytes + B.nbytes + (M * N * np.dtype(A.dtype).itemsize)
     arith_intensity = flops / bytes_accessed if bytes_accessed > 0 else 0.0
 
     return ProfileResult(
@@ -154,32 +132,21 @@ def measure_matmul(
         memory_total_kb=mem_total,
         fits_cortex_m4=fits_m4,
         arithmetic_intensity=arith_intensity,
-        num_operations=numop,
-        error = np.linalg.norm(result - ref) / np.linalg.norm(ref)
     )
 
 
 def compute_speedups(results: list[ProfileResult], baseline_name: str) -> list[ProfileResult]:
     """
-    Fill in speedup field relative to baseline kernel for each matrix shape.
-    Compares each kernel to Baseline for the same matrix dimensions only.
+    Fill in speedup field for each result relative to a named baseline kernel.
+    Modifies results in-place.
     """
-    # Group by matrix shape
-    shapes = {}
+    baseline = next((r for r in results if r.kernel_name == baseline_name), None)
+    if baseline is None:
+        raise ValueError(f"Baseline kernel '{baseline_name}' not found in results")
+
     for r in results:
-        if r.matrix_shape not in shapes:
-            shapes[r.matrix_shape] = {}
-        shapes[r.matrix_shape][r.kernel_name] = r
-    
-    # For each shape, compute speedup relative to baseline for that shape
-    for shape, kernels_dict in shapes.items():
-        baseline = kernels_dict.get(baseline_name)
-        if baseline is None:
-            continue
-        
-        for r in kernels_dict.values():
-            r.speedup = baseline.latency_ms / r.latency_ms if r.latency_ms > 0 else 0.0
-    
+        r.speedup = baseline.latency_ms / r.latency_ms if r.latency_ms > 0 else 0.0
+
     return results
 
 
@@ -187,7 +154,7 @@ def print_results_table(results: list[ProfileResult]):
     """Print results table to console (latency, GFLOPS, speedup, memory, AI)."""
     header = (
         f"\n{'Kernel':<22} {'Shape':>14} {'Latency(ms)':>12} {'GFLOPS':>8} "
-        f"{'Speedup':>8} {'Mem(KB)':>8} {'FitsM4':>7} {'AI':>8} {'NumOp':>10} {'Error':>8}"
+        f"{'Speedup':>8} {'Mem(KB)':>8} {'FitsM4':>7} {'AI':>8}"
     )
     print(header)
     print("─" * len(header))
@@ -196,5 +163,5 @@ def print_results_table(results: list[ProfileResult]):
         fits = "✓" if r.fits_cortex_m4 else "✗"
         print(
             f"{r.kernel_name:<22} {shape_str:>14} {r.latency_ms:>12.4f} {r.gflops:>8.4f} "
-            f"{r.speedup:>8.2f}x {r.memory_total_kb:>8.1f} {fits:>7} {r.arithmetic_intensity:>8.2f} {r.num_operations:>10} {r.error:>10f}"
+            f"{r.speedup:>8.2f}x {r.memory_total_kb:>8.1f} {fits:>7} {r.arithmetic_intensity:>8.2f}"
         )
