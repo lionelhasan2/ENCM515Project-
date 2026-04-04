@@ -38,7 +38,8 @@ def matmul_simd(np.ndarray[np.float32_t, ndim=2] A,
     cdef float reg1[8]
     cdef float reg2[8]
 
-    cdef int i, j, k, y, t
+    cdef int i, j, k, y, t 
+    cdef float accumulate
     cdef int numop = 0
 
     for i in range(A.shape[0]):
@@ -70,14 +71,22 @@ def matmul_scalar(np.ndarray[np.float32_t, ndim=2] A,
 
     result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32) # Declare numpy array for results
 
+    cdef float[:, :] A_view = A
+    cdef float[:, :] B_view = B
+    cdef float[:, :] result_view = result
+
     cdef int i, j, k
+    cdef float accumulate
     cdef int numop = 0
 
     for i in range(A.shape[0]):
         for j in range(B.shape[1]):
+            accumulate = 0.0
             for k in range(len(B)):
-                result[i, j] += A[i, k] * B[k, j]
+                accumulate += A_view[i, k] * B_view[k, j]
                 numop = numop + 1
+
+            result_view[i, j] = accumulate
 
     #print("Number of Operations for Scalar MatMul: ", numop)
     #print(result)
@@ -314,7 +323,7 @@ def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
     cdef int reg1[8]
     cdef int reg2[8]
 
-    cdef int i, j, k, y, t
+    cdef int i, j, k, y, t, accumulate_int
     cdef int numop = 0
 
     for i in range(A.shape[0]):
