@@ -113,34 +113,48 @@ def plot_gflops_by_kernel():
     plt.close()
 
 
-def plot_latency_per_layer():
-    """Grouped bar chart: Latency breakdown per layer across kernels"""
+def plot_accuracy_chart():
+    """Bar chart: Accuracy (relative error) across kernel implementations"""
     print("Collecting benchmark data...")
     data = collect_benchmark_data()
     
     kernel_names = list(data.keys())
-    x = np.arange(len(LAYER_NAMES))
-    width = 0.11  # Width of each bar
+    # Collect error metrics for each kernel
+    errors = []
     
-    fig, ax = plt.subplots(figsize=(14, 6))
+    for fn, props in KERNEL_PROPS.items():
+        kernel_name = props['name']
+        kernel_errors = []
+        
+        for M, K, N in WORKLOAD:
+            rng = np.random.default_rng(seed=42)
+            A = rng.standard_normal((M, K)).astype(np.float32)
+            B = rng.standard_normal((K, N)).astype(np.float32)
+            r = measure_matmul(fn, A, B, kernel_name, runs=5)
+            kernel_errors.append(r.error)
+        
+        avg_error = np.mean(kernel_errors)
+        errors.append(avg_error)
     
-    colors = plt.cm.Set3(np.linspace(0, 1, len(kernel_names)))
+    # Color code: green for low error, red for high error
+    colors = ['green' if e < 0.01 else 'orange' if e < 0.1 else 'red' for e in errors]
     
-    for i, kernel_name in enumerate(kernel_names):
-        latencies = data[kernel_name]['latencies']
-        ax.bar(x + i * width, latencies, width, label=kernel_name, color=colors[i], edgecolor='black')
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bars = ax.bar(kernel_names, errors, color=colors, edgecolor='black')
+    ax.set_ylabel('Relative Error (% of reference)', fontsize=12)
+    ax.set_title('Accuracy Comparison Across Kernels', fontsize=14, fontweight='bold')
+    ax.set_ylim(0, max(errors) * 1.15 if max(errors) > 0 else 0.1)
     
-    ax.set_xlabel('Layer', fontsize=12)
-    ax.set_ylabel('Latency (ms)', fontsize=12)
-    ax.set_title('Latency Breakdown by Layer', fontsize=14, fontweight='bold')
-    ax.set_xticks(x + width * (len(kernel_names) - 1) / 2)
-    ax.set_xticklabels(LAYER_NAMES)
-    ax.legend(loc='upper left', fontsize=9)
-    ax.grid(axis='y', alpha=0.3)
+    # Add value labels on bars
+    for bar, error in zip(bars, errors):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{error:.6f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
     
+    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    plt.savefig('latency_per_layer.png', dpi=300, bbox_inches='tight')
-    print("✓ Saved: latency_per_layer.png")
+    plt.savefig('accuracy_comparison.png', dpi=300, bbox_inches='tight')
+    print("✓ Saved: accuracy_comparison.png")
     plt.close()
 
 
@@ -226,7 +240,7 @@ def main():
     
     plot_throughput_by_kernel()
     plot_gflops_by_kernel()
-    plot_latency_per_layer()
+    plot_accuracy_chart()
     plot_codesign_comparison()
     plot_speedup_chart()
     

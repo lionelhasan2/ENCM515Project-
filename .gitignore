@@ -1,5 +1,10 @@
 # Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.dist-info/
 
 # OS
 .DS_Store
@@ -7,3 +12,15 @@ Thumbs.db
 .venv/
 build/
 
+# Generated plots
+*.png
+
+# Cython generated files
+*.c
+*.so
+*.so.*
+simd.cpython-*.so
+simdMAC.cpython-*.so
+
+# Build artifacts
+temp.*
