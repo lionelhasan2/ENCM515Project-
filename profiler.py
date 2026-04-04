@@ -120,6 +120,10 @@ def measure_matmul(
         mem_A = (M * K) / 1024
         mem_B = (K * N) / 1024
         mem_C = (M * N * 4) / 1024 # c is still returned as 32 bit float
+    elif "Int16" in kernel_name:
+        mem_A = (M * K * 2) / 1024 # 16 bit = 2 bytes, 8 bit = 1 byte
+        mem_B = (K * N * 2) / 1024
+        mem_C = (M * N * 4) / 1024 # c is still returned as 32 bit float
     else:
         mem_A = A.nbytes / 1024
         mem_B = B.nbytes / 1024

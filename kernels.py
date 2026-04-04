@@ -65,3 +65,9 @@ def matmul_simd_quantized_int8(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   SIMD + Int8 Quantized Matrix Multiply: Combines vectorization with quantization.
   """
   return simd.matmul_simd_quantized_int8(A, B)
+
+def matmul_simd_quantized_int16(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+  """
+  SIMD + Int16 Quantized Matrix Multiply: Combines vectorization with quantization.
+  """
+  return simd.matmul_simd_quantized_int16(A, B)
