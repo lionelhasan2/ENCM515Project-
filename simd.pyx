@@ -11,37 +11,39 @@ External call to generate real SIMD instructions.
 """
 cdef extern from "immintrin.h":
 
+    # AVX + 512 Family
     ctypedef float __m512
 
-    __m512 _mm512_loadu_ps(__m512*)
+    __m512 _mm512_loadu_ps(__m512*) # Loads 16 element array of float values
 
-    __m512 _mm512_setzero_ps()
+    __m512 _mm512_setzero_ps() # Set the 16 floar elements to 0
 
-    __m512 _mm512_fmadd_ps(__m512, __m512, __m512)
+    __m512 _mm512_fmadd_ps(__m512, __m512, __m512) # Fused add and multiply
 
     void _mm512_storeu_ps(float*, __m512) # Stores vector data as a scalar value   
 
-    ctypedef struct __m128i:
+    ctypedef struct __m128i: # delcare as struct to avoid typing issues
         pass
 
-    # Loads 128 bits which equates to 16 elements in 8 bit
-    __m128i _mm_loadu_si128(void * addr)  
+    # SSE Family
+    __m128i _mm_loadu_si128(void * addr) # Loads 128 bits which equates to 16 elements in 8 bit
 
-    __m128i _mm_add_epi32(__m128i, __m128i)   
+    __m128i _mm_add_epi32(__m128i, __m128i) # Adding 32 bit values
 
-    __m128i _mm_cvtepi16_epi32(__m128i)
+    __m128i _mm_cvtepi16_epi32(__m128i) # Widen the values into 32 bits frm 16 bits
 
-    __m128i _mm_cvtepi8_epi16(__m128i)
+    __m128i _mm_cvtepi8_epi16(__m128i) # Widen the lanes into 16 elements from 8
 
-    __m128i _mm_mullo_epi16(__m128i, __m128i)
+    __m128i _mm_mullo_epi16(__m128i, __m128i) # Multiply 16 bit values
 
-    __m128i _mm_setzero_si128()
+    __m128i _mm_setzero_si128() # Set the 16 element array to 0 
 
-    __m128i _mm_storeu_si128(void * addr, __m128i)
+    __m128i _mm_storeu_si128(void * addr, __m128i) # Store the 16 element reg
 
-    __m128i _mm_srli_si128(__m128i, int)
+    __m128i _mm_srli_si128(__m128i, int) # Shift the 16 element reg by this offset
 
-    ctypedef struct __m256i:
+    # AVX Family
+    ctypedef struct __m256i: # delcare as struct to avoid typing issues
         pass
 
     # Loads 256 bits which equates to 16 elements in 16 bit
@@ -83,6 +85,7 @@ def matmul_simd(np.ndarray[np.float32_t, ndim=2] A,
     for i in range(A.shape[0]):
         for j in range(B.shape[1]):
             accumulate = 0.0
+            # k must be in a range that is divisible by 16
             for k in range(0, A.shape[1] - (A.shape[1] % 16), 16):
 
                 # Fill the reigsters with data from the memory view
@@ -95,7 +98,8 @@ def matmul_simd(np.ndarray[np.float32_t, ndim=2] A,
                     accumulate += reg1[t] * reg2[t]
                     numop = numop + 1
 
-            # tail (<16 leftover)
+            # tail (<16 leftover) Any index that cannot be accessed by 16 element registers must be done scalar-like
+            # Start at the last point at which the index cannot be accessed by the reigster
             for k in range(A.shape[1] - (A.shape[1] % 16), A.shape[1]):
                 accumulate += reg1_view[i, k] * reg2_view[k, j]
                 numop = numop + 1
@@ -162,11 +166,11 @@ def matmul_true_simd(np.ndarray[np.float32_t, ndim=2] A,
         for j in range(Bt.shape[0]):
             accumulate = _mm512_setzero_ps()
             for k in range(0, Bt.shape[1], 16):
-                # k in being indexed by 8 to ensure we are not using redundant data
+                # k in being indexed by 16 to ensure we are not using redundant data
 
-                # Load all 8 datapoints in a single instruction
-                reg3 = _mm512_loadu_ps(&reg3_view[i, k]) # Loads A[i, k] -> A[i, k+7]
-                reg4 = _mm512_loadu_ps(&reg4_view[j, k]) # Loads Bt[j, k] -> Bt[j, k+7]
+                # Load all 16 datapoints in a single instruction
+                reg3 = _mm512_loadu_ps(&reg3_view[i, k]) # Loads A[i, k] -> A[i, k+15]
+                reg4 = _mm512_loadu_ps(&reg4_view[j, k]) # Loads Bt[j, k] -> Bt[j, k+15]
                 
                 # Multiply and add both registers
                 accumulate = _mm512_fmadd_ps(reg3, reg4, accumulate)
@@ -215,10 +219,10 @@ def matmul_true_simd_offset(np.ndarray[np.float32_t, ndim=2] A,
         for j in range(Bt.shape[0]):
             accumulate = _mm512_setzero_ps()
             for k in range(0, (Bt.shape[1] - offset - 16), 16):
-                # k in being indexed by 8 to ensure we are not using redundant data
+                # k in being indexed by 16 to ensure we are not using redundant data
 
                 # Load all 8 datapoints in a single instruction
-                reg3 = _mm512_loadu_ps(&reg3_view[i, k + offset]) # Loads A[i, k] -> A[i, k+7]
+                reg3 = _mm512_loadu_ps(&reg3_view[i, k + offset]) # Loads A[i, k] -> A[i, k+15]
                 reg4 = _mm512_loadu_ps(&reg4_view[j, k + offset])
                 
                 # Multiply and add both registers
@@ -278,7 +282,7 @@ def matmul_true_simd_membank(np.ndarray[np.float32_t, ndim=2] A,
                     indx = k
                 
                 # Load all 8 datapoints in a single instruction
-                reg3 = _mm512_loadu_ps(&reg3_view[i, indx]) # Loads A[i, k] -> A[i, k+7]
+                reg3 = _mm512_loadu_ps(&reg3_view[i, indx]) # Loads A[i, k] -> A[i, k+15]
                 reg4 = _mm512_loadu_ps(&reg4_view[j, indx])
                 
                 # Multiply and add both registers
@@ -405,15 +409,18 @@ def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
                 a_reg = _mm_loadu_si128(<void*> &a_view[i, k])
                 b_reg = _mm_loadu_si128(<void*> &b_view[j, k])
 
-                # split into low/high halves
+                # split into low/high halves by shifting values
                 a_lo = a_reg
                 a_hi = _mm_srli_si128(a_reg, 8)
 
                 b_lo = b_reg
                 b_hi = _mm_srli_si128(b_reg, 8)
 
+                # After you widen, the 128 bit reigster cannot hold all the values since Int16 = only 8 elements in 128 bit
+                # As such, the halvs are split to not loose any data
+
                 # widen
-                a_16_lo = _mm_cvtepi8_epi16(a_lo)
+                a_16_lo = _mm_cvtepi8_epi16(a_lo) # returns 128 bit output
                 a_16_hi = _mm_cvtepi8_epi16(a_hi)
 
                 b_16_lo = _mm_cvtepi8_epi16(b_lo)
@@ -422,19 +429,25 @@ def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
                 # multiply
                 prod16_lo = _mm_mullo_epi16(a_16_lo, b_16_lo)
                 prod16_hi = _mm_mullo_epi16(a_16_hi, b_16_hi)
-                numop = numop + 2
+                numop = numop + 2 # Must apply this twice for each half
 
                 # widen to int32
                 prod32_lo = _mm_cvtepi16_epi32(prod16_lo)
                 prod32_hi = _mm_cvtepi16_epi32(prod16_hi)
 
+                # input = 8, 16 bit, output = 4, 32 bit
+                # 128 bit register can actually hold 4 int32 values just fine, no need to shift
+
                 # accumulate
                 acc_lo = _mm_add_epi32(acc_lo, prod32_lo)
                 acc_hi = _mm_add_epi32(acc_hi, prod32_hi)
+                numop = numop + 2 # Must apply this twice for each half
 
+        # After widening 
         _mm_storeu_si128(<void*>tmp_lo, acc_lo)
         _mm_storeu_si128(<void*>tmp_hi, acc_hi)
 
+        # only 4 elements for each hi and lo, but we still index by 16, since we loaded 128 register
         result_view[i,j] = (tmp_lo[0] + tmp_lo[1] + tmp_lo[2] + tmp_lo[3] +
                             tmp_hi[0] + tmp_hi[1] + tmp_hi[2] + tmp_hi[3])
 
@@ -445,7 +458,7 @@ def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
 def matmul_simd_quantized_int16(np.ndarray[np.float32_t, ndim=2] A, 
                                 np.ndarray[np.float32_t, ndim=2] B):
     """
-    SIMD + Quantized Int16 Matrix Multiply (AVX + 512).
+    SIMD + Quantized Int16 Matrix Multiply (AVX).
     Combines quantization (reduced memory) with SIMD vectorization.
     """
     result_int = np.zeros((A.shape[0], B.shape[1]), dtype=np.int32)
@@ -485,12 +498,12 @@ def matmul_simd_quantized_int16(np.ndarray[np.float32_t, ndim=2] A,
                 #load 64 bytes, 16 values
 
                 # Typecast to void to avoid type mismatch. Raw pointer, not an actual value
-                reg3 = _mm256_loadu_si256(<void *>&a_view[i, k])
+                reg3 = _mm256_loadu_si256(<void *>&a_view[i, k]) # si = scalar int, dont care about sign, just move the data
                 reg4 = _mm256_loadu_si256(<void *>&b_view[j, k])
 
                 reg5 = _mm256_madd_epi16(reg3, reg4)
                 numop = numop + 1
-                accumulate = _mm256_add_epi32(accumulate, reg5)
+                accumulate = _mm256_add_epi32(accumulate, reg5) # epi = arithmietic, mmust care about sign like for signed bit
             
             _mm256_storeu_si256(<void*> tmp_reg, accumulate)
             result_view[i, j] = (tmp_reg[0] + tmp_reg[1] + tmp_reg[2] + tmp_reg[3] +
