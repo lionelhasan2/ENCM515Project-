@@ -24,6 +24,7 @@ cdef extern from "immintrin.h":
     ctypedef struct __m128i:
         pass
 
+    # Loads 128 bits which equates to 16 elements in 8 bit
     __m128i _mm_loadu_si128(void * addr)  
 
     __m128i _mm_add_epi32(__m128i, __m128i)   
@@ -40,18 +41,19 @@ cdef extern from "immintrin.h":
 
     __m128i _mm_srli_si128(__m128i, int)
 
-    ctypedef struct __m512i:
+    ctypedef struct __m256i:
         pass
 
-    __m512i _mm512_setzero_si512()
+    # Loads 256 bits which equates to 16 elements in 16 bit
+    __m256i _mm256_setzero_si256()
 
-    __m512i _mm512_loadu_si512(void * mem_addr)
+    __m256i _mm256_loadu_si256(void * mem_addr)
 
-    void _mm512_storeu_si512(void * mem_addr, __m512i a)
+    void _mm256_storeu_si256(void * mem_addr, __m256i)
 
-    __m512i _mm512_madd_epi16(__m512i a, __m512i b)
+    __m256i _mm256_madd_epi16(__m256i, __m256i)
 
-    __m512i _mm512_add_epi32(__m512i, __m512i)
+    __m256i _mm256_add_epi32(__m256i, __m256i)
 
 
 def matmul_simd(np.ndarray[np.float32_t, ndim=2] A, 
@@ -469,26 +471,28 @@ def matmul_simd_quantized_int16(np.ndarray[np.float32_t, ndim=2] A,
     cdef int i, j, k
     cdef int numop = 0
 
-    cdef __m512i reg3 = _mm512_setzero_si512()
-    cdef __m512i reg4 = _mm512_setzero_si512()
-    cdef __m512i accumulate = _mm512_setzero_si512()
-    cdef __m512i reg5 = _mm512_setzero_si512()
+    cdef __m256i reg3 = _mm256_setzero_si256()
+    cdef __m256i reg4 = _mm256_setzero_si256()
+    cdef __m256i accumulate = _mm256_setzero_si256()
+    cdef __m256i reg5 = _mm256_setzero_si256()
     
     cdef int tmp_reg[16]
 
     for i in range(A.shape[0]):
         for j in range(Bt.shape[0]):
-            accumulate = _mm512_setzero_si512()
-            for k in range(0, Bt.shape[1], 32):
+            accumulate = _mm256_setzero_si256()
+            for k in range(0, Bt.shape[1], 16):
+                #load 64 bytes, 16 values
 
-                reg3 = _mm512_loadu_si512(&a_view[i, k])
-                reg4 = _mm512_loadu_si512(&b_view[j, k])
+                # Typecast to void to avoid type mismatch. Raw pointer, not an actual value
+                reg3 = _mm256_loadu_si256(<void *>&a_view[i, k])
+                reg4 = _mm256_loadu_si256(<void *>&b_view[j, k])
 
-                reg5 = _mm512_madd_epi16(reg3, reg4)
+                reg5 = _mm256_madd_epi16(reg3, reg4)
                 numop = numop + 1
-                accumulate = _mm512_add_epi32(accumulate, reg5)
+                accumulate = _mm256_add_epi32(accumulate, reg5)
             
-            _mm512_storeu_si512(tmp_reg, accumulate)
+            _mm256_storeu_si256(<void*> tmp_reg, accumulate)
             result_view[i, j] = (tmp_reg[0] + tmp_reg[1] + tmp_reg[2] + tmp_reg[3] +
                                  tmp_reg[4] + tmp_reg[5] + tmp_reg[6] + tmp_reg[7] +
                                  tmp_reg[8] + tmp_reg[9] + tmp_reg[10] + tmp_reg[11] +
