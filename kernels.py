@@ -15,16 +15,23 @@ import simd
 def matmul_naive(A: np.ndarray, B: np.ndarray) -> tuple:
     """
     Truly naive baseline: Pure Python triple-nested loop, no optimization.
+    BUT: Transpose B first to avoid column-major access (cache-unfriendly).
+    This isolates the cost of pure Python overhead vs memory layout.
     """
     M, K = A.shape
-    K2, N = B.shape    
+    K2, N = B.shape
+    
+    # Transpose B for cache-friendly access
+    Bt = B.T  # (N, K)
+    
     result = [[0.0 for _ in range(N)] for _ in range(M)]
     
     numop = 0
     for i in range(M):
         for j in range(N):
+            # Now iterate over transposed B (contiguous rows instead of strided columns)
             for k in range(K):
-                result[i][j] += A[i, k] * B[k, j]
+                result[i][j] += A[i, k] * Bt[j, k]
                 numop += 1
     
     return np.array(result, dtype=np.float32), numop
