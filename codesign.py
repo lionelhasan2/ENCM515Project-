@@ -12,6 +12,9 @@ class MLPCodesignSimulator:
     
     RUNS = 3
     
+    # Transfer latency per layer (ms) - overhead for moving data to/from accelerator
+    TRANSFER_LATENCY_MS = 0.01
+    
     def _measure_layer_matmul(self, in_dim, weight_dim, kernel_fn):
         A = np.random.randn(1, in_dim).astype(np.float32)
         B = np.random.randn(in_dim, weight_dim).astype(np.float32)
@@ -27,11 +30,9 @@ class MLPCodesignSimulator:
         for layer in self.LAYERS:
             r = self._measure_layer_matmul(layer['input'], layer['weight'], matmul_scalar_cpu)
             results.append(r)
-            # Output shape: (1, weight) = weight elements
             total_output_elements += layer['weight']
         
         total_time_ms = sum(r.latency_ms for r in results)
-        # Throughput in M Elements/sec (million output elements per second)
         throughput_m_elems_sec = (total_output_elements / total_time_ms) / 1e3
         avg_gflops = sum(r.gflops for r in results) / len(results)
         total_mem = sum(r.memory_total_kb for r in results)
@@ -47,16 +48,18 @@ class MLPCodesignSimulator:
         for layer in self.LAYERS:
             r = self._measure_layer_matmul(layer['input'], layer['weight'], matmul_simd_quantized_int8)
             results.append(r)
-            # Output shape: (1, weight) = weight elements
             total_output_elements += layer['weight']
         
-        total_time_ms = sum(r.latency_ms for r in results)
-        # Throughput in M Elements/sec (million output elements per second)
+        total_compute_ms = sum(r.latency_ms for r in results)
+        # Add transfer latency: one per layer (upload + download)
+        transfer_overhead_ms = len(self.LAYERS) * self.TRANSFER_LATENCY_MS
+        total_time_ms = total_compute_ms + transfer_overhead_ms
+        
         throughput_m_elems_sec = (total_output_elements / total_time_ms) / 1e3
         avg_gflops = sum(r.gflops for r in results) / len(results)
         total_mem = sum(r.memory_total_kb for r in results)
         
-        print(f"Throughput: {throughput_m_elems_sec:.4f} M Elements/sec | Avg GFLOPS: {avg_gflops:.4f} | Memory: {total_mem:.1f}KB")
+        print(f"Throughput: {throughput_m_elems_sec:.4f} M Elements/sec | Avg GFLOPS: {avg_gflops:.4f} | Memory: {total_mem:.1f}KB | Transfer Overhead: {transfer_overhead_ms:.4f}ms")
         return {'results': results, 'throughput': throughput_m_elems_sec, 'avg_gflops': avg_gflops, 'memory': total_mem, 'total': total_time_ms}
 
 
