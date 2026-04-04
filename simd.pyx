@@ -420,6 +420,7 @@ def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
                 # multiply
                 prod16_lo = _mm_mullo_epi16(a_16_lo, b_16_lo)
                 prod16_hi = _mm_mullo_epi16(a_16_hi, b_16_hi)
+                numop = numop + 2
 
                 # widen to int32
                 prod32_lo = _mm_cvtepi16_epi32(prod16_lo)
@@ -442,7 +443,7 @@ def matmul_simd_quantized_int8(np.ndarray[np.float32_t, ndim=2] A,
 def matmul_simd_quantized_int16(np.ndarray[np.float32_t, ndim=2] A, 
                                 np.ndarray[np.float32_t, ndim=2] B):
     """
-    SIMD + Quantized Int16 Matrix Multiply (AVX).
+    SIMD + Quantized Int16 Matrix Multiply (AVX + 512).
     Combines quantization (reduced memory) with SIMD vectorization.
     """
     result_int = np.zeros((A.shape[0], B.shape[1]), dtype=np.int32)
@@ -484,6 +485,7 @@ def matmul_simd_quantized_int16(np.ndarray[np.float32_t, ndim=2] A,
                 reg4 = _mm512_loadu_si512(&b_view[j, k])
 
                 reg5 = _mm512_madd_epi16(reg3, reg4)
+                numop = numop + 1
                 accumulate = _mm512_add_epi32(accumulate, reg5)
             
             _mm512_storeu_si512(tmp_reg, accumulate)
