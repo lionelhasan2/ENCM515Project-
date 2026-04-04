@@ -3,7 +3,7 @@ Shared configuration for benchmark, codesign, and visualization scripts.
 """
 
 from kernels import (
-    matmul_scalar_cpu, matmul_simd, matmul_true_simd, 
+    matmul_naive, matmul_scalar_cpu, matmul_simd, matmul_true_simd, 
     matmul_true_simd_offset, matmul_true_simd_membank, 
     matmul_quantized_int8, matmul_simd_quantized_int8
 )
@@ -15,6 +15,7 @@ WORKLOAD_NAME = "Boundary Layers (512→256→128→64)"
 
 # Kernel properties: map kernel functions to their metadata
 KERNEL_PROPS = {
+    matmul_naive: {'name': 'Naive Python', 'uses_int8': False},
     matmul_scalar_cpu: {'name': 'Scalar', 'uses_int8': False},
     matmul_simd: {'name': 'SIMD', 'uses_int8': False},
     matmul_true_simd: {'name': 'True SIMD', 'uses_int8': False},

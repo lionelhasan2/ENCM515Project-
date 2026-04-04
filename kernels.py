@@ -12,15 +12,22 @@ import numpy as np
 import simd
 
 
-def matmul_naive(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+def matmul_naive(A: np.ndarray, B: np.ndarray) -> tuple:
     """
-    Naive baseline: numpy's @ operator (compiled C code, no hand tuning).
+    Truly naive baseline: Pure Python triple-nested loop, no optimization.
     """
-    # M, K = A.shape
-    # K2, N = B.shape
-    # assert K == K2, f"Inner dimensions must match: {K} vs {K2}"
+    M, K = A.shape
+    K2, N = B.shape    
+    result = [[0.0 for _ in range(N)] for _ in range(M)]
     
-    return A @ B
+    numop = 0
+    for i in range(M):
+        for j in range(N):
+            for k in range(K):
+                result[i][j] += A[i, k] * B[k, j]
+                numop += 1
+    
+    return np.array(result, dtype=np.float32), numop
   
 def matmul_simd(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   """

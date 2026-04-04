@@ -24,3 +24,5 @@ simdMAC.cpython-*.so
 
 # Build artifacts
 temp.*
+simd.cpython-311-darwin.so
+simdMAC.c

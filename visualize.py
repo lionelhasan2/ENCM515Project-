@@ -41,16 +41,16 @@ def collect_benchmark_data():
 
 
 def collect_codesign_data():
-    """Collect codesign comparison data"""
+    """Collect codesign comparison data for three scenarios"""
     simulator = MLPCodesignSimulator()
     cpu = simulator.benchmark_cpu_only()
-    accel = simulator.benchmark_cpu_accelerator()
+    simd = simulator.benchmark_cpu_accelerator_simd()
+    quant = simulator.benchmark_cpu_accelerator_quantization()
     
     return {
-        'cpu_throughput': cpu['throughput'],
-        'accel_throughput': accel['throughput'],
-        'cpu_memory': cpu['memory'],
-        'accel_memory': accel['memory'],
+        'cpu': {'throughput': cpu['throughput'], 'memory': cpu['memory'], 'total': cpu['total']},
+        'simd': {'throughput': simd['throughput'], 'memory': simd['memory'], 'total': simd['total']},
+        'quant': {'throughput': quant['throughput'], 'memory': quant['memory'], 'total': quant['total']},
     }
 
 
@@ -159,43 +159,49 @@ def plot_accuracy_chart():
 
 
 def plot_codesign_comparison():
-    """Side-by-side comparison: CPU-Only vs CPU+Accelerator (Throughput focus)"""
+    """Three-way comparison: CPU-Only vs True SIMD vs Quantization (Throughput & Memory focus)"""
     print("Collecting codesign data...")
     data = collect_codesign_data()
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
     # Throughput comparison (in M Elements/sec)
-    scenarios = ['CPU Only', 'CPU+Accelerator']
-    throughputs = [data['cpu_throughput'], data['accel_throughput']]
-    colors_tp = ['#FF6B6B', '#4ECDC4']
+    scenarios = ['CPU Only', 'CPU + SIMD', 'CPU + Quantization']
+    throughputs = [data['cpu']['throughput'], data['simd']['throughput'], data['quant']['throughput']]
+    colors_tp = ['#FF6B6B', '#4ECDC4', '#95E1D3']
     bars1 = ax1.bar(scenarios, throughputs, color=colors_tp, edgecolor='black', width=0.6)
     ax1.set_ylabel('Throughput (M Elements/sec)', fontsize=12)
     ax1.set_title('Throughput Comparison', fontsize=13, fontweight='bold')
+    ax1.set_ylim(0, max(throughputs) * 1.2)
     
-    for bar in bars1:
+    for bar, tp in zip(bars1, throughputs):
         height = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width()/2., height,
-                f'{height:.4f}', ha='center', va='bottom', fontsize=11, fontweight='bold')
+                f'{tp:.4f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
     
     # Memory comparison
-    memories = [data['cpu_memory'], data['accel_memory']]
+    memories = [data['cpu']['memory'], data['simd']['memory'], data['quant']['memory']]
     bars2 = ax2.bar(scenarios, memories, color=colors_tp, edgecolor='black', width=0.6)
     ax2.set_ylabel('Memory (KB)', fontsize=12)
     ax2.set_title('Memory Usage', fontsize=13, fontweight='bold')
+    ax2.set_ylim(0, max(memories) * 1.2)
     
-    for bar in bars2:
+    for bar, mem in zip(bars2, memories):
         height = bar.get_height()
         ax2.text(bar.get_x() + bar.get_width()/2., height,
-                f'{height:.1f}KB', ha='center', va='bottom', fontsize=11, fontweight='bold')
+                f'{mem:.1f}KB', ha='center', va='bottom', fontsize=10, fontweight='bold')
     
-    # Add throughput speedup annotation
-    tp_speedup = data['accel_throughput'] / data['cpu_throughput']
-    mem_saved = (1 - data['accel_memory'] / data['cpu_memory']) * 100
-    fig.text(0.5, 0.02, f'Throughput Speedup: {tp_speedup:.2f}x | Memory Reduction: {mem_saved:.1f}%',
-             ha='center', fontsize=12, fontweight='bold', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    # Add speedup annotations
+    cpu_baseline = data['cpu']['throughput']
+    simd_speedup = data['simd']['throughput'] / cpu_baseline
+    quant_speedup = data['quant']['throughput'] / cpu_baseline
+    mem_saved_quant = (1 - data['quant']['memory'] / data['cpu']['memory']) * 100
     
-    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    summary_text = f'SIMD Speedup: {simd_speedup:.2f}x | Quant Speedup: {quant_speedup:.2f}x | Quant Memory Reduction: {mem_saved_quant:.1f}%'
+    fig.text(0.5, 0.02, summary_text,
+             ha='center', fontsize=11, fontweight='bold', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+    
+    plt.tight_layout(rect=(0, 0.07, 1, 1))
     plt.savefig('codesign_comparison.png', dpi=300, bbox_inches='tight')
     print("✓ Saved: codesign_comparison.png")
     plt.close()

@@ -2,7 +2,7 @@ import numpy as np
 import time
 from config import WORKLOAD, KERNEL_PROPS
 from profiler import measure_matmul
-from kernels import matmul_scalar_cpu, matmul_true_simd, matmul_quantized_int8
+from kernels import matmul_naive, matmul_true_simd, matmul_quantized_int8
 
 
 class MLPCodesignSimulator:
@@ -23,12 +23,12 @@ class MLPCodesignSimulator:
         return result
     
     def benchmark_cpu_only(self):
-        print("SCENARIO 1: CPU-ONLY (Scalar MatMul)")
+        print("SCENARIO 1: CPU-ONLY (Naive Pure Python Baseline)")
         
         results = []
         total_output_elements = 0
         for layer in self.LAYERS:
-            r = self._measure_layer_matmul(layer['input'], layer['weight'], matmul_scalar_cpu)
+            r = self._measure_layer_matmul(layer['input'], layer['weight'], matmul_naive)
             results.append(r)
             total_output_elements += layer['weight']
         
