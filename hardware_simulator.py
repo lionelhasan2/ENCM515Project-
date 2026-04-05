@@ -316,10 +316,10 @@ def benchmark(program_name, program, elem_width=4):
             fits_cortex_m4= (mem_A+mem_B+mem_C) <= CORTEX_M4_SRAM_KB,
             arithmetic_intensity=arith_intensity,
             num_operations=cycles,
-            error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref)
+            error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref),
         )
         r.append(result)
-    print_results_table(r)
+    return r
 
 
 """
@@ -369,4 +369,12 @@ mmul_accelerator_program = [
     Instruction(9, 0, 0, 0, 0) # halt
 ]
 
-benchmark("MMUL Accelerator", mmul_accelerator_program)
+profile_result = benchmark("MMUL Accelerator", mmul_accelerator_program)
+
+# Calculate speedup based on existing benchmarks
+baseline_latencies = (34.3796e-3, 9.4571e-3, 2.1826e-3)
+
+for i in range(3):
+    profile_result[i].speedup = baseline_latencies[i] / profile_result[i].latency_ms * 1000
+
+print_results_table(profile_result)
