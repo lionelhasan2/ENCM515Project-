@@ -48,12 +48,14 @@ DMA_SETUP_LATENCY = 5e-6
 REG_COUNT = 8
 VREG_COUNT = 4
 MEM_CYCLE_COUNT = 1 # Number of cycles to stall when accessing memory
+DMEM_SIZE = 250000 # 1MB / 32-bit words = 250000 addresses
 
 DMA_SETUP_COST = 5000 # We'll assume the DMA takes 5000 cycles (5μs with 1GHz) to set up.
 # Assume that the DMA is more efficient on a per-cycle basis for larger amounts of data,
 # the latency for the first bits of data is amortized in the setup cost.
 DMA_COST_PER_BIT = 1 
 
+addresses = {} # symbol : address map
 registers = numpy.zeros(REG_COUNT, dtype=numpy.int32) # 8 register array, each register can handle integers/floating point values.
 # numpy goes up to int64 while python has arbitrary length integers, it's a bit overkill but we use that here instead.
 v_registers = [0 for i in range(VREG_COUNT)] # 256-bit Vector register array for SIMD operations
@@ -65,11 +67,11 @@ v_registers = [0 for i in range(VREG_COUNT)] # 256-bit Vector register array for
 # In the quantized implementation each word in data memory will only be 8 bits wide, so only a quarter
 # of the memory has to be used (4 8-bit integers per 32-bit word).
 
-data_memory = numpy.array(250000, dtype=numpy.float32) # 8 megabits / 32-bit words = 250000 unique indexes for data
+data_memory = numpy.zeros(DMEM_SIZE, dtype=numpy.float32) # 2MB / 32-bit words = 500000 unique indexes for data
 
 pc = 0      # Program counter
 cycles = 0  # we check the total cycles for performance comparison
-flops = 0   # flops count
+flop_total = 0   # flops count
 prog_enabled = 0 # Program enabled
 bytes_accessed = 0
 
@@ -77,6 +79,248 @@ bytes_accessed = 0
 dma_input_1 = 0
 dma_input_2 = 0
 dma_output = 0 # Writes after address until finished
+
+# Executes a given instruction
+def exec(instr: Instruction):
+    global data_memory, pc, cycles, flop_total, prog_enabled, bytes_accessed
+    global dma_input_1, dma_input_2, dma_output, addresses, registers, v_registers
+    next_pc = pc+1
+    match instr.op:
+        case 0: # NOP
+            pass
+        case 1: # ADD R1 R2 R3
+            registers[instr.reg3] = registers[instr.reg1] + registers[instr.reg2]
+            flop_total += 1
+            cycles += 1
+        case 2: # ADDI R1 imm R3
+            registers[instr.reg3] = registers[instr.reg1] + instr.imm
+            flop_total += 1
+            cycles += 1
+        case 3: # MUL R1 R2 R3
+            registers[instr.reg3] = registers[instr.reg1] * registers[instr.reg2]
+            flop_total += 1
+            cycles += 1
+        case 4: # MULI R1 R2 R3
+            registers[instr.reg3] = registers[instr.reg1] * instr.imm
+            flop_total += 1
+            cycles += 1
+        # Quantization gets an advantage here as the memory cycle stalls become more significant,
+        # but adds an overhead in decoding the 32-bit words into 4 8-bit integers.
+        case 5: # LW R3 imm(R1)
+            registers[instr.reg3] = data_memory[instr.reg1+instr.imm]
+            bytes_accessed += 1
+            cycles += 1 + MEM_CYCLE_COUNT
+        case 6: # SW R2 imm(R1)
+            data_memory[instr.reg1+instr.imm] = registers[instr.reg3]
+            bytes_accessed += 1
+            cycles += 1 + MEM_CYCLE_COUNT
+        case 7: # JMP imm
+            next_pc = instr.imm
+            cycles += 1
+        # Branching can take longer depending on control hazards, but we'll assume branch
+        # predictions are always correct, so branching always takes 1 cycle.
+        case 8: # BEQ R1 R2 imm
+            if registers[instr.reg1] == registers[instr.reg2]:
+                next_pc = instr.imm
+            cycles += 1 
+        case 9: # HALT
+            prog_enabled = 0
+            cycles += 1
+        case 10: # VADD VR1 VR2 VR3 (32-bit)
+            # As long as an overflow doesn't occur on one of the 32-bit numbers adding the 256-bit vectors is
+            # actually equivalent. Since overflow isn't being modelled in this implementation, this is sufficient.
+            v_registers[instr.reg3] = v_registers[instr.reg1] + v_registers[instr.reg2]
+            flop_total += 8 # 8 total addition operations for each 32-bit word
+            cycles += 1
+        
+        case 11: # VMUL VR1 VR2 VR3 (32-bit)
+            # Here each 32-bit number needs to be multiplied individually and added back together in VR3
+            v1 = v_registers[instr.reg1]
+            v2 = v_registers[instr.reg2]
+            v3 = 0
+            bitMask = 0xFFFFFFFF # 32-bit wide mask
+            # Add each 32-bit integer to v3
+            for i in range(0, 128, 32):
+                # Read lowest 32 bits of each vector register
+                t1 = (v1 & (0xFFFFFFFF << i)) >> i # Get 32-bit integer
+                t2 = (v2 & (0xFFFFFFFF << i)) >> i 
+                t3 = t1*t2
+                v3 = v3 + (t3 << i) # Add back to correct bit shift
+            v_registers[instr.reg3] = v3 # Write back result
+            flop_total += 8
+            cycles += 1
+        
+        case 12: # VLW VR3, (R1) (32-bit)
+            acc = 0 # Accumulator to write to VR3
+            for i in range(8):
+                acc <<= 32 # Taking advantage of 0 << 32 = 0 to shift all after the first integer
+                acc += data_memory[instr.reg1+i]
+            v_registers[instr.reg3] = acc
+            bytes_accessed += 8
+            cycles += 1 + MEM_CYCLE_COUNT
+        
+        case 13: # VSW VR2, (R1) (32-bit)
+            # Write to the array from LSB to MSB
+            t = v_registers[instr.reg2]
+            for i in range(8-1, -1, -1):
+                data_memory[i] = t & 0xFFFFFFFF # Write 32 LSB to DMEM
+                t >>= 32 # shift temp to next word
+            bytes_accessed += 8
+            cycles += 1 + MEM_CYCLE_COUNT
+        
+        case 14: # LA R3 imm
+            registers[instr.reg3] = addresses[instr.imm]
+            cycles += 1
+        
+        case 20: # MAC R1 R2 R3
+            registers[instr.reg3] = registers[instr.reg3] + registers[instr.reg1]*registers[instr.reg2]
+            flop_total += 2 # one for add, one for multiply
+            cycles += 1
+        
+        case 21: # DMAS1 R1 R2 (DMA input address range #1)
+            dma_input_1 = registers[instr.reg1]
+            cycles += 1
+        case 22: # DMAS2 R1 R2 (DMA input address range #2)
+            dma_input_2 = registers[instr.reg1]
+            cycles += 1
+        case 23: # DMASO R1 (DMA output address range #3)
+            dma_output = registers[instr.reg1]
+            cycles += 1
+        case 24: # MMUL (simulated MMUL unit using DMA information)
+            # We'll assume the MMUL unit has 256 parallel MAC units, so it only takes 1 cycle per every
+            # 256 MAC operations. The total MAC operations required for multiplying matrixes with shape
+            # m x k x n is actually m x k x n (which is why it's 2 x m x k x n FLOPS for add and multiply)
+            # easier to calculate this after the matrixes are retrieved from memory
+
+            # Get left and right matrixes from data memory using DMA variables
+            left_matrix = read_DMEM_to_matrix(dma_input_1)
+            right_matrix = read_DMEM_to_matrix(dma_input_2)
+
+            # Calculate total required MAC operations
+            t = len(left_matrix) * len(left_matrix[0]) * len(right_matrix[0]) # m x k x n
+            cycles += ceil(t/256) + 1 # divided by 256 assuming all MAC units were consuming data roughly equally
+            cycles += DMA_SETUP_COST # account for DMA setup cost here
+            flop_total += t * 2 # 2 x m x k x n flops
+
+            # Run matrix multiplication on retrieved input matrixes
+            product_matrix = multiply_matrixes(left_matrix, right_matrix)
+
+            # Write product matrix to memory at DMEM[dma_output:]
+            write_matrix_to_DMEM(product_matrix, dma_output)
+    
+    pc = next_pc
+            
+# MMUL simulated unit helper function, generates matrix from DMEM
+def read_DMEM_to_matrix(adr1):
+    global data_memory
+    rows = data_memory[adr1+0].astype(numpy.int32)
+    cols = data_memory[adr1+1].astype(numpy.int32)
+    m = numpy.array([[data_memory[adr1+2+i+j*cols] for i in range(cols)] for j in range(rows)], dtype=numpy.float32)
+    return m
+
+# MMUL helper function, multiplies matrixes m1 and m2
+def multiply_matrixes(m1, m2):
+    rows = len(m1)
+    cols = len(m2[0])
+    return_matrix = numpy.zeros((rows, cols), dtype=numpy.float32)
+    for row in range(rows):
+        for col in range(cols):
+            acc = 0
+            for i in range(len(m2)):
+                acc += m1[row][i] * m2[i][col]
+            return_matrix[row][col] = acc
+    return return_matrix
+
+def run_program(instruction_memory):
+    global registers, v_registers, data_memory, pc, cycles, flop_total, prog_enabled, dma_input_1, dma_input_2, dma_output, bytes_accessed
+
+    # Reset program variables / metrics
+    registers = numpy.zeros(REG_COUNT, dtype=numpy.int32)
+    v_registers = [0 for i in range(VREG_COUNT)]
+    # Don't reset data memory as it needs to be written to for input before the program runs!
+    # data_memory = numpy.zeros(DMEM_SIZE, dtype=numpy.float32)
+    pc = 0
+    cycles = 0
+    flop_total = 0
+    bytes_accessed = 0
+    prog_enabled = 1
+
+    dma_input_1 = 0
+    dma_input_2 = 0
+    dma_output = 0
+
+    # Run program until halted by CPU
+    while prog_enabled:
+        exec(instruction_memory[pc])
+    
+def write_matrix_to_DMEM(matrix, address):
+    global data_memory
+    dp = 0
+    data_memory[dp+address] = len(matrix) # row count
+    data_memory[dp+1+address] = len(matrix[0]) # col count
+    dp += 2
+    for i in range(len(matrix)):
+        for j in range(len(matrix[0])):
+            data_memory[dp+address] = matrix[i][j]
+            dp += 1
+
+def reset_DMEM():
+    global data_memory, DMEM_SIZE
+    data_memory = numpy.zeros(DMEM_SIZE, dtype=numpy.float32)
+
+# run benchmark with specific program and specified element width
+def benchmark(program_name, program, elem_width=4):
+    global addresses, data_memory
+    rng = numpy.random.default_rng(seed=42)
+    dp = 0
+    r = []
+    for M, K, N in WORKLOAD:
+        reset_DMEM()
+        A = rng.standard_normal((M, K)).astype(numpy.float32)
+        B = rng.standard_normal((K, N)).astype(numpy.float32)
+        write_matrix_to_DMEM(A, 0)
+        addresses['A'] = 0
+        matrix_2_pos = 2+M*K # address of second matrix information
+        write_matrix_to_DMEM(B, matrix_2_pos)
+        addresses['B'] = matrix_2_pos
+        matrix_3_pos = matrix_2_pos + 2 + K*N
+        addresses['C'] = matrix_3_pos
+        run_program(program)
+
+        approximate_latency = cycles / CLK_SPD #  Approximate latency from cycle count and clock speed assumptions
+        # Memory used (KB) = (total elements in array + 2) * x bytes/elem / 1024 bytes/KB
+        mem_A = ((M*K)+2) * elem_width / 1024
+        mem_B = ((K*N)+2) * elem_width / 1024
+        mem_C = ((M*N)+2) * elem_width / 1024
+
+        arith_intensity = flop_total / bytes_accessed if bytes_accessed > 0 else 0.0
+
+        ref = numpy.matmul(A.astype(numpy.float64), B.astype(numpy.float64))
+        actual_output = read_DMEM_to_matrix(matrix_3_pos)
+
+        result = ProfileResult(
+            kernel_name=program_name,
+            matrix_shape=(M, K, N),
+            dtype=str(A.dtype),
+            runs=1, # The hardware sim is deterministic, no need for multiple runs
+            latency_ms=approximate_latency * 1000,
+            latency_std_ms=approximate_latency * 1000,
+            latency_min_ms=approximate_latency * 1000,
+            latency_max_ms=approximate_latency * 1000,
+            flops= flop_total / approximate_latency,
+            gflops= (flop_total / approximate_latency) / 1e9,
+            memory_A_kb= mem_A,
+            memory_B_kb= mem_B,
+            memory_C_kb= mem_C,
+            memory_total_kb=mem_A+mem_B+mem_C,
+            fits_cortex_m4= (mem_A+mem_B+mem_C) <= CORTEX_M4_SRAM_KB,
+            arithmetic_intensity=arith_intensity,
+            num_operations=cycles,
+            error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref)
+        )
+        r.append(result)
+    print_results_table(r)
+
 
 """
 Implemented instructions:
@@ -90,6 +334,7 @@ Implemented instructions:
 7: JMP imm (jump to IMEM[imm])
 8: BEQ R1, R2, imm (branch to IMEM[imm] if equal)
 9: HALT (finish the program)
+14: LA R3, imm (load imm key address to register)
 
 SIMD instructions, using vector registers:
 10: VADD VR1, VR2, VR3 (VR1+VR2 -> VR3)
@@ -112,235 +357,16 @@ Here, we can approximate the number of cycles it will take as the setup cost ()
 24: MMUL (Orders MMUL unit to run using DMA information)
 """
 
-# Executes a given instruction
-def exec(instr: Instruction):
-    next_pc = pc+1
-    match instr.op:
-        case 0: # NOP
-            pass
-        case 1: # ADD R1 R2 R3
-            registers[instr.reg3] = registers[instr.reg1] + registers[instr.reg2]
-            flops += 1
-            cycles += 1
-        case 2: # ADDI R1 imm R3
-            registers[instr.reg3] = registers[instr.reg1] + instr.imm
-            flops += 1
-            cycles += 1
-        case 3: # MUL R1 R2 R3
-            registers[instr.reg3] = registers[instr.reg1] * registers[instr.reg2]
-            flops += 1
-            cycles += 1
-        case 4: # MULI R1 R2 R3
-            registers[instr.reg3] = registers[instr.reg1] * instr.imm
-            flops += 1
-            cycles += 1
-        # Quantization gets an advantage here as the memory cycle stalls become more significant,
-        # but adds an overhead in decoding the 32-bit words into 4 8-bit integers.
-        case 5: # LW R3 imm(R1)
-            registers[instr.reg3] = data_memory[instr.reg1+instr.imm]
-            bytes_accessed += 1
-            cycles += 1 + MEM_CYCLE_COUNT
-        case 6: # SW R2 imm(R1)
-            data_memory[instr.reg1+instr.imm] = instr.reg3
-            bytes_accessed += 1
-            cycles += 1 + MEM_CYCLE_COUNT
-        case 7: # JMP imm
-            next_pc = instr.imm
-            cycles += 1
-        # Branching can take longer depending on control hazards, but we'll assume branch
-        # predictions are always correct, so branching always takes 1 cycle.
-        case 8: # BEQ R1 R2 imm
-            if instr.reg1 == instr.reg2:
-                next_pc = instr.imm
-            cycles += 1 
-        case 9: # HALT
-            prog_enabled = 0
-            cycles += 1
-        case 10: # VADD VR1 VR2 VR3 (32-bit)
-            # As long as an overflow doesn't occur on one of the 32-bit numbers adding the 256-bit vectors is
-            # actually equivalent. Since overflow isn't being modelled in this implementation, this is sufficient.
-            v_registers[instr.reg3] = v_registers[instr.reg1] + v_registers[instr.reg2]
-            flops += 8 # 8 total addition operations for each 32-bit word
-            cycles += 1
-        
-        case 11: # VMUL VR1 VR2 VR3 (32-bit)
-            # Here each 32-bit number needs to be multiplied individually and added back together in VR3
-            v1 = v_registers[instr.reg1]
-            v2 = v_registers[instr.reg2]
-            v3 = 0
-            bitMask = 0xFFFFFFFF # 32-bit wide mask
-            # Add each 32-bit integer to v3
-            for i in range(0, 128, 32):
-                # Read lowest 32 bits of each vector register
-                t1 = (v1 & (0xFFFFFFFF << i)) >> i # Get 32-bit integer
-                t2 = (v2 & (0xFFFFFFFF << i)) >> i 
-                t3 = t1*t2
-                v3 = v3 + (t3 << i) # Add back to correct bit shift
-            v_registers[instr.reg3] = v3 # Write back result
-            flops += 8
-            cycles += 1
-        
-        case 12: # VLW VR3, (R1) (32-bit)
-            acc = 0 # Accumulator to write to VR3
-            for i in range(8):
-                acc <<= 32 # Taking advantage of 0 << 32 = 0 to shift all after the first integer
-                acc += data_memory[instr.reg1+i]
-            v_registers[instr.reg3] = acc
-            bytes_accessed += 8
-            cycles += 1 + MEM_CYCLE_COUNT
-        
-        case 13: # VSW VR2, (R1) (32-bit)
-            # Write to the array from LSB to MSB
-            t = v_registers[instr.reg2]
-            for i in range(8-1, -1, -1):
-                data_memory[i] = t & 0xFFFFFFFF # Write 32 LSB to DMEM
-                t >>= 32 # shift temp to next word
-            bytes_accessed += 8
-            cycles += 1 + MEM_CYCLE_COUNT
-        
-        case 20: # MAC R1 R2 R3
-            registers[instr.reg3] = registers[instr.reg3] + registers[instr.reg1]*registers[instr.reg2]
-            flops += 2 # one for add, one for multiply
-            cycles += 1
-        
-        case 21: # DMAS1 R1 R2 (DMA input address range #1)
-            dma_input_1 = instr.reg1
-            cycles += 1
-        case 22: # DMAS2 R1 R2 (DMA input address range #2)
-            dma_input_2 = instr.reg1
-            cycles += 1
-        case 23: # DMASO R1 (DMA output address range #3)
-            dma_output = instr.reg1
-            cycles += 1
-        case 24: # MMUL (simulated MMUL unit using DMA information)
-            # We'll assume the MMUL unit has 256 parallel MAC units, so it only takes 1 cycle per every
-            # 256 MAC operations. The total MAC operations required for multiplying matrixes with shape
-            # m x k x n is actually m x k x n (which is why it's 2 x m x k x n FLOPS for add and multiply)
-            # easier to calculate this after the matrixes are retrieved from memory
-
-            # Get left and right matrixes from data memory using DMA variables
-            left_matrix = read_DMEM_to_matrix(dma_input_1[0])
-            right_matrix = read_DMEM_to_matrix(dma_input_2[0])
-
-            # Calculate total required MAC operations
-            t = len(left_matrix) * len(left_matrix[0]) * len(right_matrix[0]) # m x k x n
-            cycles += ceil(t/256) + 1 # divided by 256 assuming all MAC units were consuming data roughly equally
-            flops += t * 2 # 2 x m x k x n flops
-
-            # Run matrix multiplication on retrieved input matrixes
-            product_matrix = multiply_matrixes(left_matrix, right_matrix)
-
-            # Write product matrix to memory at DMEM[dma_output:]
-            write_matrix_to_DMEM(product_matrix, dma_output)
-    
-    pc = next_pc
-            
-# MMUL simulated unit helper function, generates matrix from DMEM
-def read_DMEM_to_matrix(adr1):
-    rows = data_memory[adr1+0]
-    cols = data_memory[adr1+1]
-    m = numpy.array([[data_memory[adr1+2+i+j*cols] for i in range(cols)] for j in range(rows)], dtype=numpy.float32)
-    return m
-
-# MMUL helper function, multiplies matrixes m1 and m2
-def multiply_matrixes(m1, m2):
-    rows = len(m1)
-    cols = len(m2[0])
-    return_matrix = numpy.zeros((cols, rows), dtype=numpy.float32)
-    for row in range(rows):
-        for col in range(cols):
-            acc = 0
-            for i in range(len(m2)):
-                acc += m1[row][i] * m2[i][col]
-            return_matrix[row][col] = acc
-    return return_matrix
-
-def run_program(instruction_memory):
-    global registers, v_registers, data_memory, pc, cycles, flops, prog_enabled, dma_input_1, dma_input_2, dma_output, bytes_accessed
-
-    # Reset program variables / metrics
-    registers = numpy.zeros(REG_COUNT, dtype=numpy.int32)
-    v_registers = [0 for i in range(VREG_COUNT)]
-    # Don't reset data memory as it needs to be written to for input before the program runs!
-    # data_memory = numpy.array(250000, dtype=numpy.float32)
-    pc = 0
-    cycles = 0
-    flops = 0
-    bytes_accessed = 0
-    prog_enabled = 1
-
-    dma_input_1 = 0
-    dma_input_2 = 0
-    dma_output = 0
-
-    # Run program until halted by CPU
-    while prog_enabled:
-        exec(instruction_memory[pc])
-    
-def write_matrix_to_DMEM(matrix, address):
-    global data_memory
-    dp = 0
-    data_memory[dp] = len(matrix) # row count
-    data_memory[dp+1] = len(matrix[0]) # col count
-    dp += 2
-    for i in range(matrix):
-        for j in range(matrix[0]):
-            data_memory[dp+address] = matrix[i][j]
-
-def reset_DMEM():
-    global data_memory
-    data_memory = numpy.array(250000, dtype=numpy.float32)
-
-# run benchmark with specific program and specified element width
-def benchmark(program_name, program, elem_width=4):
-    rng = numpy.random.default_rng(seed=42)
-    dp = 0
-    r = []
-    for M, K, N in WORKLOAD:
-        reset_DMEM()
-        A = rng.standard_normal((M, K)).astype(numpy.float32)
-        B = rng.standard_normal((K, N)).astype(numpy.float32)
-        write_matrix_to_DMEM(A, 0)
-        matrix_2_pos = 2+M*K # address of second matrix information
-        write_matrix_to_DMEM(B, matrix_2_pos)
-        run_program(program)
-
-        approximate_latency = cycles / CLK_SPD #  Approximate latency from cycle count and clock speed assumptions
-        # Memory used (KB) = (total elements in array + 2) * x bytes/elem / 1024 bytes/KB
-        mem_A = ((M*K)+2) * elem_width / 1024
-        mem_B = ((K*N)+2) * elem_width / 1024
-        mem_C = ((M*N)+2) * elem_width / 1024
-
-        arith_intensity = flops / bytes_accessed if bytes_accessed > 0 else 0.0
-
-        ref = numpy.matmul(A.astype(numpy.float64), B.astype(numpy.float64))
-        matrix_3_pos = matrix_2_pos + 2 + K*N
-        actual_output = read_DMEM_to_matrix(matrix_3_pos)
-
-        result = ProfileResult(
-            kernel_name=program_name,
-            matrix_shape=(M, K, N),
-            dtype=str(A.dtype),
-            runs=1, # The hardware sim is deterministic, no need for multiple runs
-            latency_ms=approximate_latency * 1000,
-            latency_std_ms=approximate_latency * 1000,
-            latency_min_ms=approximate_latency * 1000,
-            latency_max_ms=approximate_latency * 1000,
-            flops=flops,
-            gflops=flops / 1e9,
-            memory_A_kb= mem_A,
-            memory_B_kb= mem_B,
-            memory_C_kb= mem_C,
-            memory_total_kb=mem_A+mem_B+mem_C,
-            fits_cortex_m4= (mem_A+mem_B+mem_C) <= CORTEX_M4_SRAM_KB,
-            arithmetic_intensity=arith_intensity,
-            num_operations=cycles,
-            error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref)
-        )
-        r.append(result)
-    print_results_table(r)
-
 mmul_accelerator_program = [
-
+    # Load matrix addresses to registers, write to DMA settings, and run MMUL
+    Instruction(14, 0, 0, 1, 'A'), # la x1 'A'
+    Instruction(14, 0, 0, 2, 'B'), # la x2 'B'
+    Instruction(14, 0, 0, 3, 'C'), # la x3 'C'
+    Instruction(21, 1, 0, 0, 0), # dmas x1
+    Instruction(22, 2, 0, 0, 0), # dmas x2
+    Instruction(23, 3, 0, 0, 0), # dmas x3
+    Instruction(24, 0, 0, 0, 0), # MMUL
+    Instruction(9, 0, 0, 0, 0) # halt
 ]
 
+benchmark("MMUL Accelerator", mmul_accelerator_program)
