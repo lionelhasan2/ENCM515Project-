@@ -262,7 +262,8 @@ def run_program(instruction_memory):
     # Reset program variables / metrics
     registers = numpy.zeros(REG_COUNT, dtype=numpy.int32)
     v_registers = [0 for i in range(VREG_COUNT)]
-    data_memory = numpy.array(250000, dtype=numpy.float32)
+    # Don't reset data memory as it needs to be written to for input before the program runs!
+    # data_memory = numpy.array(250000, dtype=numpy.float32)
     pc = 0
     cycles = 0
     flops = 0
