@@ -1,5 +1,7 @@
 import numpy
 from math import ceil
+from config import WORKLOAD
+from profiler import CORTEX_M4_SRAM_KB, ProfileResult, print_results_table
 
 # The goal here is to simulate a simple RISC CPU (no complex features like pipelining or branching)
 # to use for matrix multiplication and compare the performance of different accelerators and
@@ -69,13 +71,12 @@ pc = 0      # Program counter
 cycles = 0  # we check the total cycles for performance comparison
 flops = 0   # flops count
 prog_enabled = 0 # Program enabled
+bytes_accessed = 0
 
 # DMA address controls and matrix specifications
-dma_input_1 = [0, 0]
-dma_input_2 = [0, 0]
+dma_input_1 = 0
+dma_input_2 = 0
 dma_output = 0 # Writes after address until finished
-input_1_rows = 0
-input_2_rows = 0
 
 """
 Implemented instructions:
@@ -105,8 +106,8 @@ These last instructions simulate the use of a dedicated accelerator.
 In reality control of the DMA is MUCH more complicated, but this is most analagous to a burst mode DMA
 that takes control of the system bus until all data has been sent before transferring control back to the CPU.
 Here, we can approximate the number of cycles it will take as the setup cost ()
-21: DMAS1 R1 R2 imm (Setup DMA to address DMEM[R1:R2] for first input matrix with imm rows)
-22: DMAS2 R1 R2 imm (Setup DMA to address DMEM[R1:R2] for second input matrix with imm rows)
+21: DMAS1 R1 (Setup DMA to address DMEM[R1:] for first input matrix)
+22: DMAS2 R1 (Setup DMA to address DMEM[R1:] for second input matrix)
 23: DMASO R1 (Setup DMA to address DMEM[R1:] for output matrix (variable size depending on matrix))
 24: MMUL (Orders MMUL unit to run using DMA information)
 """
@@ -137,9 +138,11 @@ def exec(instr: Instruction):
         # but adds an overhead in decoding the 32-bit words into 4 8-bit integers.
         case 5: # LW R3 imm(R1)
             registers[instr.reg3] = data_memory[instr.reg1+instr.imm]
+            bytes_accessed += 1
             cycles += 1 + MEM_CYCLE_COUNT
         case 6: # SW R2 imm(R1)
             data_memory[instr.reg1+instr.imm] = instr.reg3
+            bytes_accessed += 1
             cycles += 1 + MEM_CYCLE_COUNT
         case 7: # JMP imm
             next_pc = instr.imm
@@ -183,6 +186,7 @@ def exec(instr: Instruction):
                 acc <<= 32 # Taking advantage of 0 << 32 = 0 to shift all after the first integer
                 acc += data_memory[instr.reg1+i]
             v_registers[instr.reg3] = acc
+            bytes_accessed += 8
             cycles += 1 + MEM_CYCLE_COUNT
         
         case 13: # VSW VR2, (R1) (32-bit)
@@ -191,6 +195,7 @@ def exec(instr: Instruction):
             for i in range(8-1, -1, -1):
                 data_memory[i] = t & 0xFFFFFFFF # Write 32 LSB to DMEM
                 t >>= 32 # shift temp to next word
+            bytes_accessed += 8
             cycles += 1 + MEM_CYCLE_COUNT
         
         case 20: # MAC R1 R2 R3
@@ -198,13 +203,11 @@ def exec(instr: Instruction):
             flops += 2 # one for add, one for multiply
             cycles += 1
         
-        case 21: # DMAS1 R1 R2 imm (DMA input address range #1)
-            dma_input_1 = [instr.reg1, instr.reg2]
-            input_1_rows = instr.imm
+        case 21: # DMAS1 R1 R2 (DMA input address range #1)
+            dma_input_1 = instr.reg1
             cycles += 1
-        case 22: # DMAS2 R1 R2 imm (DMA input address range #2)
-            dma_input_2 = [instr.reg1, instr.reg2]
-            input_2_rows = instr.imm
+        case 22: # DMAS2 R1 R2 (DMA input address range #2)
+            dma_input_2 = instr.reg1
             cycles += 1
         case 23: # DMASO R1 (DMA output address range #3)
             dma_output = instr.reg1
@@ -216,8 +219,8 @@ def exec(instr: Instruction):
             # easier to calculate this after the matrixes are retrieved from memory
 
             # Get left and right matrixes from data memory using DMA variables
-            left_matrix = read_DMEM_to_matrix(dma_input_1[0], dma_input_1[1], input_1_rows)
-            right_matrix = read_DMEM_to_matrix(dma_input_2[0], dma_input_2[1], input_2_rows)
+            left_matrix = read_DMEM_to_matrix(dma_input_1[0])
+            right_matrix = read_DMEM_to_matrix(dma_input_2[0])
 
             # Calculate total required MAC operations
             t = len(left_matrix) * len(left_matrix[0]) * len(right_matrix[0]) # m x k x n
@@ -228,19 +231,15 @@ def exec(instr: Instruction):
             product_matrix = multiply_matrixes(left_matrix, right_matrix)
 
             # Write product matrix to memory at DMEM[dma_output:]
-            data_pointer = dma_output
-            for i in range(len(product_matrix)):
-                for j in range(len(product_matrix[0])):
-                    data_memory[data_pointer] = product_matrix[i][j]
-                    data_pointer += 1
+            write_matrix_to_DMEM(product_matrix, dma_output)
     
     pc = next_pc
             
 # MMUL simulated unit helper function, generates matrix from DMEM
-def read_DMEM_to_matrix(adr1, adr2, rows):
-    if (adr2-adr1+1) % rows != 0: raise ValueError("Number of columns does not correspond with rows and total elements")
-    cols = (adr2-adr1+1) // rows
-    m = numpy.array([[data_memory[i+j*cols] for i in range(cols)] for j in range(rows)], dtype=numpy.float32)
+def read_DMEM_to_matrix(adr1):
+    rows = data_memory[adr1+0]
+    cols = data_memory[adr1+1]
+    m = numpy.array([[data_memory[adr1+2+i+j*cols] for i in range(cols)] for j in range(rows)], dtype=numpy.float32)
     return m
 
 # MMUL helper function, multiplies matrixes m1 and m2
@@ -257,7 +256,7 @@ def multiply_matrixes(m1, m2):
     return return_matrix
 
 def run_program(instruction_memory):
-    global registers, v_registers, data_memory, pc, cycles, flops, prog_enabled, dma_input_1, dma_input_2, dma_output, input_1_rows, input_2_rows
+    global registers, v_registers, data_memory, pc, cycles, flops, prog_enabled, dma_input_1, dma_input_2, dma_output, bytes_accessed
 
     # Reset program variables / metrics
     registers = numpy.zeros(REG_COUNT, dtype=numpy.int32)
@@ -267,14 +266,81 @@ def run_program(instruction_memory):
     pc = 0
     cycles = 0
     flops = 0
+    bytes_accessed = 0
     prog_enabled = 1
 
-    dma_input_1 = [0, 0]
-    dma_input_2 = [0, 0]
+    dma_input_1 = 0
+    dma_input_2 = 0
     dma_output = 0
-    input_1_rows = 0
-    input_2_rows = 0
 
     # Run program until halted by CPU
     while prog_enabled:
         exec(instruction_memory[pc])
+    
+def write_matrix_to_DMEM(matrix, address):
+    global data_memory
+    dp = 0
+    data_memory[dp] = len(matrix) # row count
+    data_memory[dp+1] = len(matrix[0]) # col count
+    dp += 2
+    for i in range(matrix):
+        for j in range(matrix[0]):
+            data_memory[dp+address] = matrix[i][j]
+
+def reset_DMEM():
+    global data_memory
+    data_memory = numpy.array(250000, dtype=numpy.float32)
+
+# run benchmark with specific program and specified element width
+def benchmark(program_name, program, elem_width=4):
+    rng = numpy.random.default_rng(seed=42)
+    dp = 0
+    r = []
+    for M, K, N in WORKLOAD:
+        reset_DMEM()
+        A = rng.standard_normal((M, K)).astype(numpy.float32)
+        B = rng.standard_normal((K, N)).astype(numpy.float32)
+        write_matrix_to_DMEM(A, 0)
+        matrix_2_pos = 2+M*K # address of second matrix information
+        write_matrix_to_DMEM(B, matrix_2_pos)
+        run_program(program)
+
+        approximate_latency = cycles / CLK_SPD #  Approximate latency from cycle count and clock speed assumptions
+        # Memory used (KB) = (total elements in array + 2) * x bytes/elem / 1024 bytes/KB
+        mem_A = ((M*K)+2) * elem_width / 1024
+        mem_B = ((K*N)+2) * elem_width / 1024
+        mem_C = ((M*N)+2) * elem_width / 1024
+
+        arith_intensity = flops / bytes_accessed if bytes_accessed > 0 else 0.0
+
+        ref = numpy.matmul(A.astype(numpy.float64), B.astype(numpy.float64))
+        matrix_3_pos = matrix_2_pos + 2 + K*N
+        actual_output = read_DMEM_to_matrix(matrix_3_pos)
+
+        result = ProfileResult(
+            kernel_name=program_name,
+            matrix_shape=(M, K, N),
+            dtype=str(A.dtype),
+            runs=1, # The hardware sim is deterministic, no need for multiple runs
+            latency_ms=approximate_latency * 1000,
+            latency_std_ms=approximate_latency * 1000,
+            latency_min_ms=approximate_latency * 1000,
+            latency_max_ms=approximate_latency * 1000,
+            flops=flops,
+            gflops=flops / 1e9,
+            memory_A_kb= mem_A,
+            memory_B_kb= mem_B,
+            memory_C_kb= mem_C,
+            memory_total_kb=mem_A+mem_B+mem_C,
+            fits_cortex_m4= (mem_A+mem_B+mem_C) <= CORTEX_M4_SRAM_KB,
+            arithmetic_intensity=arith_intensity,
+            num_operations=cycles,
+            error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref)
+        )
+        r.append(result)
+    print_results_table(r)
+
+mmul_accelerator_program = [
+
+]
+
