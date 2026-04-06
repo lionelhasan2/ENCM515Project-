@@ -1,6 +1,6 @@
 import numpy
 from math import ceil
-from config import WORKLOAD
+# from config import WORKLOAD
 from profiler import CORTEX_M4_SRAM_KB, ProfileResult, print_results_table
 
 # The goal here is to simulate a simple RISC CPU (no complex features like pipelining or branching)
@@ -269,58 +269,59 @@ def reset_DMEM():
     data_memory = numpy.zeros(DMEM_SIZE, dtype=numpy.float32)
 
 # run benchmark with specific program and specified element width
-def benchmark(program_name, program, elem_width=4):
+def benchmark(program_name, program, A: numpy.ndarray, B: numpy.ndarray, elem_width=4):
     global addresses, data_memory
     rng = numpy.random.default_rng(seed=42)
     dp = 0
     r = []
-    for M, K, N in WORKLOAD:
-        reset_DMEM()
-        A = rng.standard_normal((M, K)).astype(numpy.float32)
-        B = rng.standard_normal((K, N)).astype(numpy.float32)
-        write_matrix_to_DMEM(A, 0)
-        addresses['A'] = 0
-        matrix_2_pos = 2+M*K # address of second matrix information
-        write_matrix_to_DMEM(B, matrix_2_pos)
-        addresses['B'] = matrix_2_pos
-        matrix_3_pos = matrix_2_pos + 2 + K*N
-        addresses['C'] = matrix_3_pos
-        run_program(program)
+    M = len(A)
+    K = len(A[0])
+    N = len(B[0])
+    reset_DMEM()
+    write_matrix_to_DMEM(A, 0)
+    addresses['A'] = 0
+    matrix_2_pos = 2+M*K # address of second matrix information
+    write_matrix_to_DMEM(B, matrix_2_pos)
+    addresses['B'] = matrix_2_pos
+    matrix_3_pos = matrix_2_pos + 2 + K*N
+    addresses['C'] = matrix_3_pos
+    run_program(program)
 
-        approximate_latency = cycles / CLK_SPD #  Approximate latency from cycle count and clock speed assumptions
-        # Memory used (KB) = (total elements in array + 2) * x bytes/elem / 1024 bytes/KB
-        mem_A = ((M*K)+2) * elem_width / 1024
-        mem_B = ((K*N)+2) * elem_width / 1024
-        mem_C = ((M*N)+2) * elem_width / 1024
+    approximate_latency = cycles / CLK_SPD #  Approximate latency from cycle count and clock speed assumptions
+    # Memory used (KB) = (total elements in array + 2) * x bytes/elem / 1024 bytes/KB
+    mem_A = ((M*K)+2) * elem_width / 1024
+    mem_B = ((K*N)+2) * elem_width / 1024
+    mem_C = ((M*N)+2) * elem_width / 1024
 
-        arith_intensity = flop_total / bytes_accessed if bytes_accessed > 0 else 0.0
+    arith_intensity = flop_total / bytes_accessed if bytes_accessed > 0 else 0.0
 
-        ref = numpy.matmul(A.astype(numpy.float64), B.astype(numpy.float64))
-        actual_output = read_DMEM_to_matrix(matrix_3_pos)
+    ref = numpy.matmul(A.astype(numpy.float64), B.astype(numpy.float64))
+    actual_output = read_DMEM_to_matrix(matrix_3_pos)
 
-        result = ProfileResult(
-            kernel_name=program_name,
-            matrix_shape=(M, K, N),
-            dtype=str(A.dtype),
-            runs=1, # The hardware sim is deterministic, no need for multiple runs
-            latency_ms=approximate_latency * 1000,
-            latency_std_ms=approximate_latency * 1000,
-            latency_min_ms=approximate_latency * 1000,
-            latency_max_ms=approximate_latency * 1000,
-            flops= flop_total / approximate_latency,
-            gflops= (flop_total / approximate_latency) / 1e9,
-            memory_A_kb= mem_A,
-            memory_B_kb= mem_B,
-            memory_C_kb= mem_C,
-            memory_total_kb=mem_A+mem_B+mem_C,
-            fits_cortex_m4= (mem_A+mem_B+mem_C) <= CORTEX_M4_SRAM_KB,
-            arithmetic_intensity=arith_intensity,
-            num_operations=cycles,
-            error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref),
-        )
-        r.append(result)
-    return r
+    result = ProfileResult(
+        kernel_name=program_name,
+        matrix_shape=(M, K, N),
+        dtype=str(A.dtype),
+        runs=1, # The hardware sim is deterministic, no need for multiple runs
+        latency_ms=approximate_latency * 1000,
+        latency_std_ms=approximate_latency * 1000,
+        latency_min_ms=approximate_latency * 1000,
+        latency_max_ms=approximate_latency * 1000,
+        flops= flop_total / approximate_latency,
+        gflops= (flop_total / approximate_latency) / 1e9,
+        memory_A_kb= mem_A,
+        memory_B_kb= mem_B,
+        memory_C_kb= mem_C,
+        memory_total_kb=mem_A+mem_B+mem_C,
+        fits_cortex_m4= (mem_A+mem_B+mem_C) <= CORTEX_M4_SRAM_KB,
+        arithmetic_intensity=arith_intensity,
+        num_operations=cycles,
+        error = numpy.linalg.norm(actual_output - ref) / numpy.linalg.norm(ref),
+    )
+    return result
 
+def matmul(A: numpy.ndarray, B: numpy.ndarray):
+    return benchmark("MMUL Accelerator", mmul_accelerator_program, A, B)
 
 """
 Implemented instructions:
@@ -369,12 +370,17 @@ mmul_accelerator_program = [
     Instruction(9, 0, 0, 0, 0) # halt
 ]
 
-profile_result = benchmark("MMUL Accelerator", mmul_accelerator_program)
+# if __name__ == "main":
+#     rng = numpy.random.default_rng(seed=42)
+#     for (M, K, N) in WORKLOAD:
+#         A = rng.standard_normal((M, K)).astype(numpy.float32)
+#         B = rng.standard_normal((K, N)).astype(numpy.float32)
+#         profile_result = matmul(A, B)
 
-# Calculate speedup based on existing benchmarks
-baseline_latencies = (34.3796e-3, 9.4571e-3, 2.1826e-3)
+#     # Calculate speedup based on existing benchmarks
+#     baseline_latencies = (34.3796e-3, 9.4571e-3, 2.1826e-3)
 
-for i in range(3):
-    profile_result[i].speedup = baseline_latencies[i] / profile_result[i].latency_ms * 1000
+#     for i in range(3):
+#         profile_result[i].speedup = baseline_latencies[i] / profile_result[i].latency_ms * 1000
 
-print_results_table(profile_result)
+#     print_results_table(profile_result)

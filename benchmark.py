@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config import WORKLOAD, WORKLOAD_NAME, KERNEL_PROPS
 from profiler import measure_matmul, compute_speedups, print_results_table
+from hardware_simulator import matmul
 
 
 def benchmark():
@@ -23,6 +24,15 @@ def benchmark():
             r = measure_matmul(fn, A, B, kernel_name, runs=5)
             all_results.append(r)
     
+    # The hardware simulation can't use the regular profiler, so it's done seperately here
+    simResults = []
+    for M, K, N in WORKLOAD:
+        rng = np.random.default_rng(seed=42)
+        A = rng.standard_normal((M, K)).astype(np.float32)
+        B = rng.standard_normal((K, N)).astype(np.float32)
+        r = matmul(A, B)
+        simResults.append(r)
+    
     # Compute speedups relative to Scalar baseline
     compute_speedups(all_results, "Scalar")
     
@@ -34,7 +44,11 @@ def benchmark():
         print_results_table(kernel_results)
         total = sum(r.latency_ms for r in kernel_results)
         print(f"Total: {total:.4f} ms\n")
-
+    
+    # Print hardware simulator results
+    print_results_table(simResults)
+    total = sum(r.latency_ms for r in simResults)
+    print(f"Total: {total:.4f} ms\n")
 
 if __name__ == "__main__":
     benchmark()

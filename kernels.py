@@ -10,7 +10,7 @@ representing C = A @ B where:
 
 import numpy as np
 import simd
-
+import hardware_simulator
 
 def matmul_naive(A: np.ndarray, B: np.ndarray) -> tuple:
     """
@@ -79,3 +79,9 @@ def matmul_simd_quantized_int8(A: np.ndarray, B: np.ndarray) -> np.ndarray:
   SIMD + Int8 Quantized Matrix Multiply: Combines vectorization with quantization.
   """
   return simd.matmul_simd_quantized_int8(A, B)
+
+def matmul_accelerator(A: np.ndarray, B:np.ndarray) -> np.ndarray:
+  """
+  256-MAC MMUL accelerator + DMA: simulates the use of an accelerator for matrix multiplication
+  """
+  return hardware_simulator.matmul(A, B)
