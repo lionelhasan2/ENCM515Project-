@@ -35,6 +35,10 @@ def benchmark():
     
     # Compute speedups relative to Scalar baseline
     compute_speedups(all_results, "Scalar")
+    for sim_result in simResults:
+        for reg_result in all_results:
+            if sim_result.matrix_shape == reg_result.matrix_shape and reg_result.kernel_name == "Scalar":
+                sim_result.speedup = reg_result.latency_ms / sim_result.latency_ms
     
     # Print results grouped by kernel
     for fn, props in KERNEL_PROPS.items():
